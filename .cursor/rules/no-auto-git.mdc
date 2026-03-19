@@ -1,0 +1,10 @@
+---
+description: No automatic git commit or push — user controls version control
+alwaysApply: true
+---
+
+# Git: no automatic commits or pushes
+
+- **Do not** run `git commit`, `git add` for committing, or `git push` unless the user **explicitly** asks (e.g. "commit", "דחוף", "push to GitHub").
+- It is fine to run read-only git commands (`git status`, `git log`, `git diff`) when needed to investigate.
+- After code changes, leave the working tree as-is or summarize what changed; the user will commit manually when they want.

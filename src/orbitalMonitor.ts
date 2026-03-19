@@ -15,6 +15,133 @@ const ASTEROID_NAMES = [
   '2026-WZ3',
 ] as const
 
+const TRACK_LIGHT_STORAGE_KEY = 'hachal-track-lights'
+
+/** Per-track display “light” (radar blip, label, corridor line, table marker). */
+interface TrackLightPreset {
+  id: number
+  name: string
+  fill: string
+  stroke: string
+  glow: string
+  badgeBg: string
+  badgeFg: string
+  badgeStroke: string
+}
+
+const TRACK_LIGHT_PRESETS: readonly TrackLightPreset[] = [
+  {
+    id: 0,
+    name: 'Teal',
+    fill: 'rgba(45, 212, 191, 0.92)',
+    stroke: 'rgba(13, 148, 136, 1)',
+    glow: 'rgba(45, 212, 191, 0.55)',
+    badgeBg: 'rgba(6, 54, 42, 0.94)',
+    badgeFg: '#99f6e4',
+    badgeStroke: 'rgba(45, 212, 191, 0.75)',
+  },
+  {
+    id: 1,
+    name: 'Amber',
+    fill: 'rgba(251, 191, 36, 0.92)',
+    stroke: 'rgba(217, 119, 6, 1)',
+    glow: 'rgba(251, 191, 36, 0.45)',
+    badgeBg: 'rgba(67, 42, 6, 0.94)',
+    badgeFg: '#fef3c7',
+    badgeStroke: 'rgba(251, 191, 36, 0.8)',
+  },
+  {
+    id: 2,
+    name: 'Magenta',
+    fill: 'rgba(232, 121, 249, 0.9)',
+    stroke: 'rgba(192, 38, 211, 1)',
+    glow: 'rgba(232, 121, 249, 0.5)',
+    badgeBg: 'rgba(59, 16, 64, 0.94)',
+    badgeFg: '#fae8ff',
+    badgeStroke: 'rgba(232, 121, 249, 0.8)',
+  },
+  {
+    id: 3,
+    name: 'Ice',
+    fill: 'rgba(224, 242, 254, 0.95)',
+    stroke: 'rgba(125, 211, 252, 1)',
+    glow: 'rgba(186, 230, 253, 0.5)',
+    badgeBg: 'rgba(15, 40, 58, 0.94)',
+    badgeFg: '#e0f2fe',
+    badgeStroke: 'rgba(125, 211, 252, 0.85)',
+  },
+  {
+    id: 4,
+    name: 'Coral',
+    fill: 'rgba(251, 113, 133, 0.9)',
+    stroke: 'rgba(225, 29, 72, 1)',
+    glow: 'rgba(251, 113, 133, 0.45)',
+    badgeBg: 'rgba(76, 18, 28, 0.94)',
+    badgeFg: '#ffe4e6',
+    badgeStroke: 'rgba(251, 113, 133, 0.85)',
+  },
+  {
+    id: 5,
+    name: 'Lime',
+    fill: 'rgba(163, 230, 53, 0.9)',
+    stroke: 'rgba(101, 163, 13, 1)',
+    glow: 'rgba(190, 242, 100, 0.45)',
+    badgeBg: 'rgba(28, 48, 8, 0.94)',
+    badgeFg: '#ecfccb',
+    badgeStroke: 'rgba(163, 230, 53, 0.8)',
+  },
+  {
+    id: 6,
+    name: 'Violet',
+    fill: 'rgba(167, 139, 250, 0.9)',
+    stroke: 'rgba(109, 40, 217, 1)',
+    glow: 'rgba(167, 139, 250, 0.5)',
+    badgeBg: 'rgba(40, 24, 72, 0.94)',
+    badgeFg: '#ede9fe',
+    badgeStroke: 'rgba(167, 139, 250, 0.85)',
+  },
+  {
+    id: 7,
+    name: 'Slate',
+    fill: 'rgba(148, 163, 184, 0.92)',
+    stroke: 'rgba(71, 85, 105, 1)',
+    glow: 'rgba(148, 163, 184, 0.35)',
+    badgeBg: 'rgba(15, 23, 42, 0.94)',
+    badgeFg: '#e2e8f0',
+    badgeStroke: 'rgba(148, 163, 184, 0.75)',
+  },
+] as const
+
+function getTrackLight(id: number): TrackLightPreset {
+  const n = TRACK_LIGHT_PRESETS.length
+  return TRACK_LIGHT_PRESETS[((id % n) + n) % n]!
+}
+
+function loadPersistedLightId(trackNum: number): number {
+  try {
+    const raw = sessionStorage.getItem(TRACK_LIGHT_STORAGE_KEY)
+    if (!raw) return (trackNum - 1) % TRACK_LIGHT_PRESETS.length
+    const m = JSON.parse(raw) as Record<string, number>
+    const v = m[String(trackNum)]
+    return typeof v === 'number' && v >= 0 && v < TRACK_LIGHT_PRESETS.length
+      ? v
+      : (trackNum - 1) % TRACK_LIGHT_PRESETS.length
+  } catch {
+    return (trackNum - 1) % TRACK_LIGHT_PRESETS.length
+  }
+}
+
+function persistLightId(trackNum: number, lightId: number): void {
+  try {
+    const raw = sessionStorage.getItem(TRACK_LIGHT_STORAGE_KEY)
+    const m: Record<string, number> = raw ? (JSON.parse(raw) as Record<string, number>) : {}
+    m[String(trackNum)] = lightId
+    sessionStorage.setItem(TRACK_LIGHT_STORAGE_KEY, JSON.stringify(m))
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 type Phase = 'intro' | 'space'
 
 interface Asteroid {
@@ -31,6 +158,8 @@ interface Asteroid {
   destructPhase: number
   /** 0→1 fuse ramp (amplifies surge) */
   fuse: number
+  /** Display light preset id (radar + UI) */
+  lightId: number
 }
 
 interface ThreatRow {
@@ -38,6 +167,7 @@ interface ThreatRow {
   speedKmS: number
   collisionLabel: string
   magneticNT: number
+  lightId: number
 }
 
 interface FalloutZone {
@@ -93,6 +223,7 @@ let phaseLine: HTMLElement | null = null
 let appMountEl: HTMLElement | null = null
 let logicalW = 800
 let logicalH = 600
+let lastUtcUiMs = 0
 
 /** Simulation time multiplier (speed limiter) */
 let simTimeScale = 1
@@ -174,6 +305,7 @@ function spawnAsteroids(w: number, h: number): void {
       baseSpeed,
       destructPhase: rand(0, Math.PI * 2),
       fuse: 0,
+      lightId: loadPersistedLightId(i + 1),
     })
   }
   lastImpactOverlay = null
@@ -213,14 +345,15 @@ function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): Thr
   const dec = magical.precision ? 3 : 1
   const ang = (Math.atan2(cy - ey, cx - ex) * (180 / Math.PI) + 360) % 360
   const rAu = (dist / (logicalW * 0.45)) * 0.25 + 0.0001
-  const collisionLabel = `θ ${ang.toFixed(dec)}° · r ${rAu.toFixed(dec + 2)} AU`
+  const collisionLabel = `ψ = ${ang.toFixed(dec)}°   ρ = ${rAu.toFixed(dec + 2)} AU`
   const magneticNT = magneticAlongPath(a.x, a.y, ex, ey, timeMs)
 
   return {
-    label: `#${a.num} ${a.name}`,
+    label: `#${a.num} · ${a.name}`,
     speedKmS,
     collisionLabel,
     magneticNT,
+    lightId: a.lightId,
   }
 }
 
@@ -366,44 +499,62 @@ function drawEarth(cx: number, cy: number, r: number, pulse: number): void {
 }
 
 function drawAsteroid(a: Asteroid, spacePhase: boolean): void {
-  ctx.fillStyle = spacePhase ? 'rgba(167, 243, 208, 0.95)' : '#6b7280'
+  const L = getTrackLight(a.lightId)
+
+  if (!spacePhase) {
+    ctx.fillStyle = '#6b7280'
+    ctx.beginPath()
+    ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#374151'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    return
+  }
+
+  ctx.save()
+  ctx.shadowColor = L.glow
+  ctx.shadowBlur = 14
+  ctx.fillStyle = L.fill
   ctx.beginPath()
   ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2)
   ctx.fill()
-  ctx.strokeStyle = spacePhase ? 'rgba(16, 185, 129, 0.9)' : '#374151'
-  ctx.lineWidth = spacePhase ? 1.25 : 1.5
+  ctx.restore()
+
+  ctx.strokeStyle = L.stroke
+  ctx.lineWidth = 1.35
+  ctx.beginPath()
+  ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2)
   ctx.stroke()
 
-  if (spacePhase) {
-    ctx.fillStyle = 'rgba(6, 24, 18, 0.92)'
-    ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)'
-    ctx.lineWidth = 1
-    const label = String(a.num)
-    ctx.font = 'bold 11px ui-monospace, monospace'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    const tw = ctx.measureText(label).width
-    const bx = a.x - tw / 2 - 3
-    const by = a.y - a.r - 14
-    const bw = tw + 6
-    const bh = 14
-    const rad = 3
-    ctx.beginPath()
-    ctx.moveTo(bx + rad, by)
-    ctx.lineTo(bx + bw - rad, by)
-    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + rad)
-    ctx.lineTo(bx + bw, by + bh - rad)
-    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - rad, by + bh)
-    ctx.lineTo(bx + rad, by + bh)
-    ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - rad)
-    ctx.lineTo(bx, by + rad)
-    ctx.quadraticCurveTo(bx, by, bx + rad, by)
-    ctx.closePath()
-    ctx.fill()
-    ctx.stroke()
-    ctx.fillStyle = '#a7f3d0'
-    ctx.fillText(label, a.x, a.y - a.r - 7)
-  }
+  ctx.fillStyle = L.badgeBg
+  ctx.strokeStyle = L.badgeStroke
+  ctx.lineWidth = 1
+  const label = String(a.num)
+  ctx.font = 'bold 11px ui-monospace, monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const tw = ctx.measureText(label).width
+  const bx = a.x - tw / 2 - 3
+  const by = a.y - a.r - 14
+  const bw = tw + 6
+  const bh = 14
+  const rad = 3
+  ctx.beginPath()
+  ctx.moveTo(bx + rad, by)
+  ctx.lineTo(bx + bw - rad, by)
+  ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + rad)
+  ctx.lineTo(bx + bw, by + bh - rad)
+  ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - rad, by + bh)
+  ctx.lineTo(bx + rad, by + bh)
+  ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - rad)
+  ctx.lineTo(bx, by + rad)
+  ctx.quadraticCurveTo(bx, by, bx + rad, by)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  ctx.fillStyle = L.badgeFg
+  ctx.fillText(label, a.x, a.y - a.r - 7)
 }
 
 function drawIntro(animT: number): void {
@@ -438,8 +589,11 @@ function drawIntro(animT: number): void {
   ctx.fillText('Click or tap anywhere to enter deep space', cx, h - 56)
 }
 
-function drawCorridorLine(ax: number, ay: number, ex: number, ey: number): void {
-  ctx.strokeStyle = 'rgba(248, 113, 113, 0.65)'
+function drawCorridorLine(ax: number, ay: number, ex: number, ey: number, lightId: number): void {
+  const L = getTrackLight(lightId)
+  ctx.save()
+  ctx.globalAlpha = 0.78
+  ctx.strokeStyle = L.stroke
   ctx.lineWidth = 2
   ctx.setLineDash([6, 6])
   ctx.beginPath()
@@ -447,6 +601,7 @@ function drawCorridorLine(ax: number, ay: number, ex: number, ey: number): void 
   ctx.lineTo(ex, ey)
   ctx.stroke()
   ctx.setLineDash([])
+  ctx.restore()
 }
 
 function drawRadarGrille(cx: number, cy: number, radius: number, animT: number): void {
@@ -510,7 +665,7 @@ function drawSpace(animT: number): void {
     const row = analyzeThreat(a, earthX, earthY, animT)
     if (row) {
       threats.push(row)
-      drawCorridorLine(a.x, a.y, earthX, earthY)
+      drawCorridorLine(a.x, a.y, earthX, earthY, a.lightId)
     }
     drawAsteroid(a, true)
   }
@@ -527,8 +682,8 @@ function updateTable(threats: ThreatRow[], animT: number): void {
       <tr class="orbital-table__empty">
         <td colspan="4">
           <div class="orbital-table__empty-inner">
-            <span class="orbital-table__empty-title">No intercept condition</span>
-            <span class="orbital-table__empty-detail">No track satisfies resistance-corridor criteria at this update.</span>
+            <span class="orbital-table__empty-title">No corridor occupancy</span>
+            <span class="orbital-table__empty-detail">No track passes the Earth-fixed resistance-corridor gate at this update cycle.</span>
           </div>
         </td>
       </tr>`
@@ -537,14 +692,25 @@ function updateTable(threats: ThreatRow[], animT: number): void {
       .map(
         (t) => `
       <tr class="orbital-table__row">
-        <td class="orbital-table__cell orbital-table__cell--designator orbital-mono">${escapeHtml(t.label)}</td>
+        <td class="orbital-table__cell orbital-table__cell--designator orbital-mono orbital-table__cell--with-light">
+          <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Track display light" aria-hidden="true"></span>
+          <span class="orbital-table__designator-text">${escapeHtml(t.label)}</span>
+        </td>
         <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${formatSpeed(t.speedKmS)}</td>
-        <td class="orbital-table__cell orbital-table__cell--geometry">${escapeHtml(t.collisionLabel)}</td>
+        <td class="orbital-table__cell orbital-table__cell--geometry orbital-mono">${escapeHtml(t.collisionLabel)}</td>
         <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${magical.precision ? t.magneticNT.toFixed(2) : t.magneticNT.toFixed(1)}</td>
       </tr>`,
       )
       .join('')
     tableBody.innerHTML = rows
+  }
+
+  const utcEl = document.getElementById('orbital-sheet-utc')
+  if (utcEl && animT - lastUtcUiMs >= 1000) {
+    lastUtcUiMs = animT
+    const d = new Date()
+    utcEl.setAttribute('datetime', d.toISOString())
+    utcEl.textContent = d.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
   }
 
   if (phaseLine) {
@@ -555,18 +721,39 @@ function updateTable(threats: ThreatRow[], animT: number): void {
 
 function updateFleetReadout(): void {
   if (!fleetEl) return
-  const prec = magical.precision ? 3 : 1
   const lines = asteroids.map((a) => {
     const kms = Math.hypot(a.vx, a.vy) * KM_SCALE
     const fuseP = (a.fuse * 100).toFixed(magical.precision ? 1 : 0)
-    return `<div class="orbital-fleet__row">
-      <span class="orbital-mono">#${a.num}</span>
-      <span>${escapeHtml(a.name)}</span>
-      <span class="orbital-mono">${formatSpeed(kms)} km/s</span>
-      <span class="orbital-mono">fuse ${fuseP}%</span>
+    const swatches = TRACK_LIGHT_PRESETS.map((p) => {
+      const active = a.lightId === p.id
+      return `<button type="button" class="orbital-light-swatch${active ? ' is-active' : ''}" data-light-track="${a.num}" data-light-id="${p.id}" title="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)}" aria-pressed="${active ? 'true' : 'false'}" style="--swatch-fill:${p.fill};--swatch-stroke:${p.stroke}"></button>`
+    }).join('')
+    return `<div class="orbital-fleet__row" data-track="${a.num}">
+      <div class="orbital-fleet__lights" role="toolbar" aria-label="Display light · track ${a.num}">
+        ${swatches}
+      </div>
+      <div class="orbital-fleet__metrics">
+        <span class="orbital-mono">#${a.num}</span>
+        <span class="orbital-fleet__name">${escapeHtml(a.name)}</span>
+        <span class="orbital-mono">${formatSpeed(kms)} km/s</span>
+        <span class="orbital-mono">fuse ${fuseP}%</span>
+      </div>
     </div>`
   })
   fleetEl.innerHTML = lines.join('')
+}
+
+function onFleetLightPointer(e: Event): void {
+  const t = (e.target as HTMLElement).closest('[data-light-track][data-light-id]')
+  if (!t || !(t instanceof HTMLButtonElement)) return
+  const num = Number(t.getAttribute('data-light-track'))
+  const lid = Number(t.getAttribute('data-light-id'))
+  if (!Number.isFinite(num) || !Number.isFinite(lid)) return
+  if (lid < 0 || lid >= TRACK_LIGHT_PRESETS.length) return
+  const a = asteroids.find((x) => x.num === num)
+  if (!a) return
+  a.lightId = lid
+  persistLightId(num, lid)
 }
 
 function escapeHtml(value: string): string {
@@ -727,6 +914,7 @@ function respawnOneSlot(num: number): void {
     baseSpeed,
     destructPhase: rand(0, Math.PI * 2),
     fuse: 0,
+    lightId: loadPersistedLightId(num),
   }
   asteroids.push(neo)
   asteroids.sort((a, b) => a.num - b.num)
@@ -744,11 +932,10 @@ function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
     <div class="hachal-gate">
       <div class="hachal-gate__panel">
         <p class="hachal-gate__eyebrow">Restricted · HACHAL</p>
-        <h1 class="hachal-gate__title">מערכת חי״ל</h1>
-        <p class="hachal-gate__title-en">HACHAL System</p>
-        <p class="hachal-gate__sub">הזן קוד גישה להפעלת המערכת / Enter access code to activate</p>
+        <h1 class="hachal-gate__title">HACHAL System</h1>
+        <p class="hachal-gate__sub">Enter access code to activate the console.</p>
         <form class="hachal-gate__form" id="hachal-login-form" autocomplete="off">
-          <label class="hachal-gate__label" for="hachal-password">קוד גישה · Access code</label>
+          <label class="hachal-gate__label" for="hachal-password">Access code</label>
           <input
             id="hachal-password"
             name="hachal-password"
@@ -760,7 +947,7 @@ function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
             aria-describedby="hachal-login-error"
           />
           <p id="hachal-login-error" class="hachal-gate__error" role="alert" aria-live="polite"></p>
-          <button type="submit" class="hachal-gate__submit">הפעל מערכת · Activate</button>
+          <button type="submit" class="hachal-gate__submit">Activate system</button>
         </form>
       </div>
     </div>
@@ -779,7 +966,7 @@ function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
       onUnlocked()
       return
     }
-    if (errEl) errEl.textContent = 'קוד שגוי · Invalid access code'
+    if (errEl) errEl.textContent = 'Invalid access code'
     input?.select()
   })
 }
@@ -798,10 +985,10 @@ function mountApplication(root: HTMLElement): void {
           <div class="orbital-balloon__tail" aria-hidden="true"></div>
           <div class="orbital-balloon__inner">
             <div class="orbital-balloon__header">
-              <span class="orbital-balloon__badge">חי״ל · HACHAL</span>
+              <span class="orbital-balloon__badge">HACHAL · SSA console</span>
               <div class="orbital-balloon__header-actions">
                 <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
-                <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">יציאה</button>
+                <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">Sign out</button>
               </div>
             </div>
             <div class="orbital-controls">
@@ -824,48 +1011,72 @@ function mountApplication(root: HTMLElement): void {
               <label class="orbital-mode"><input type="checkbox" id="mode-multizone" /> Multi-band fallout</label>
             </fieldset>
             <p class="orbital-phase" id="orbital-phase">Galactic field · 6 objects · Earth-centered</p>
-            <div class="orbital-fleet" id="orbital-fleet" aria-label="Fleet speeds"></div>
-            <section class="orbital-data-sheet" aria-labelledby="orbital-sheet-title">
+            <p class="orbital-fleet__legend">Track display light · radar blip, corridor line, table marker</p>
+            <div class="orbital-fleet" id="orbital-fleet" aria-label="Fleet status and per-track lights"></div>
+            <section class="orbital-data-sheet orbital-data-sheet--s3" aria-labelledby="orbital-sheet-title">
+              <div class="orbital-data-sheet__ribbon" aria-hidden="true"></div>
               <header class="orbital-data-sheet__head">
                 <div class="orbital-data-sheet__head-top">
-                  <h2 class="orbital-data-sheet__title" id="orbital-sheet-title">Intercept assessment</h2>
-                  <span class="orbital-data-sheet__stamp">LIVE</span>
+                  <h2 class="orbital-data-sheet__title" id="orbital-sheet-title">
+                    NEO corridor occupancy
+                  </h2>
+                  <span class="orbital-data-sheet__stamp" title="Live telemetry refresh">LIVE · REFRESH</span>
                 </div>
                 <p class="orbital-data-sheet__subtitle">
-                  Resistance corridor · Earth-centered frame · provisional kinematics
+                  Earth-fixed gate · geocentric inertial (GCRS) · 2-D radar-plane projection
                 </p>
+                <div class="orbital-data-sheet__meta">
+                  <time id="orbital-sheet-utc" class="orbital-data-sheet__utc orbital-mono" datetime=""
+                    >— UTC</time
+                  >
+                  <span class="orbital-data-sheet__sep" aria-hidden="true">|</span>
+                  <span class="orbital-data-sheet__frame">Units: SI · angles deg · ρ in AU</span>
+                </div>
               </header>
               <div class="orbital-table-wrap">
                 <table
                   class="orbital-table orbital-table--assessment"
                   aria-live="polite"
-                  aria-describedby="orbital-sheet-title"
+                  aria-describedby="orbital-sheet-title orbital-sheet-foot"
                 >
                   <caption class="orbital-sr-only">
-                    Objects whose trajectories intersect the Earth resistance corridor; columns are designator,
-                    scalar speed, corridor geometry, and magnetic field along the line of sight.
+                    Near-Earth object tracks whose forward trajectories intersect the operational resistance corridor
+                    about Earth. Columns: object identifier, speed magnitude in kilometres per second, corridor
+                    line-of-sight geometry (ψ bearing and ρ range proxy), and magnetic-field magnitude along the
+                    Earth–object path in nanotesla. Values are simulation outputs for operator training.
                   </caption>
                   <thead>
                     <tr>
                       <th scope="col" class="orbital-th">
-                        <span class="orbital-th__main">Designator</span>
-                        <span class="orbital-th__sub">track · catalogue ID</span>
+                        <abbr class="orbital-th__main" title="Object identifier">OBJ-ID</abbr>
+                        <span class="orbital-th__sub">track · provisional designation</span>
                       </th>
                       <th scope="col" class="orbital-th orbital-th--numeric">
-                        <span class="orbital-th__main">Scalar speed</span>
-                        <span class="orbital-th__sub">km · s<sup>−1</sup></span>
+                        <abbr class="orbital-th__main" title="Speed magnitude">|v|</abbr>
+                        <span class="orbital-th__sub">km · s<sup>−1</sup> <span class="orbital-th__hint">(ISO 80000-3)</span></span>
                       </th>
                       <th scope="col" class="orbital-th">
-                        <span class="orbital-th__main">Corridor geometry</span>
-                        <span class="orbital-th__sub">bearing θ · range ρ (AU)</span>
+                        <abbr class="orbital-th__main" title="Corridor geometry in the display plane">Corridor LOS</abbr>
+                        <span class="orbital-th__sub">ψ azimuth · ρ range (AU)</span>
                       </th>
                       <th scope="col" class="orbital-th orbital-th--numeric">
-                        <span class="orbital-th__main">B-field (path)</span>
-                        <span class="orbital-th__sub">nanotesla</span>
+                        <abbr class="orbital-th__main" title="Magnetic field magnitude along path">|B|</abbr>
+                        <span class="orbital-th__sub">nT · dipole-scaled model</span>
                       </th>
                     </tr>
                   </thead>
                   <tbody id="orbital-tbody"></tbody>
+                  <tfoot>
+                    <tr class="orbital-table__foot">
+                      <td colspan="4" id="orbital-sheet-foot">
+                        <span class="orbital-table__foot-line"
+                          ><strong>Protocol</strong> · Simulated conjunction-style corridor filter. Not a miss-distance or
+                          TCA (time of closest approach) solution. For training / demonstration — not for operational
+                          hazard notification or public alert.</span
+                        >
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </section>
@@ -900,6 +1111,8 @@ function mountApplication(root: HTMLElement): void {
   tableBody = root.querySelector('#orbital-tbody')
   fleetEl = root.querySelector('#orbital-fleet')
   phaseLine = root.querySelector('#orbital-phase')
+
+  fleetEl?.addEventListener('click', onFleetLightPointer)
 
   root.querySelector('#orbital-restart')?.addEventListener('click', () => restart())
 
