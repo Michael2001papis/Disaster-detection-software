@@ -522,17 +522,22 @@ function updateTable(threats: ThreatRow[], animT: number): void {
   if (threats.length === 0) {
     tableBody.innerHTML = `
       <tr class="orbital-table__empty">
-        <td colspan="4">No object in Earth resistance corridor</td>
+        <td colspan="4">
+          <div class="orbital-table__empty-inner">
+            <span class="orbital-table__empty-title">No intercept condition</span>
+            <span class="orbital-table__empty-detail">No track satisfies resistance-corridor criteria at this update.</span>
+          </div>
+        </td>
       </tr>`
   } else {
     const rows = threats
       .map(
         (t) => `
-      <tr>
-        <td class="orbital-mono">${escapeHtml(t.label)}</td>
-        <td class="orbital-mono">${formatSpeed(t.speedKmS)}</td>
-        <td>${escapeHtml(t.collisionLabel)}</td>
-        <td class="orbital-mono">${magical.precision ? t.magneticNT.toFixed(2) : t.magneticNT.toFixed(1)}</td>
+      <tr class="orbital-table__row">
+        <td class="orbital-table__cell orbital-table__cell--designator orbital-mono">${escapeHtml(t.label)}</td>
+        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${formatSpeed(t.speedKmS)}</td>
+        <td class="orbital-table__cell orbital-table__cell--geometry">${escapeHtml(t.collisionLabel)}</td>
+        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${magical.precision ? t.magneticNT.toFixed(2) : t.magneticNT.toFixed(1)}</td>
       </tr>`,
       )
       .join('')
@@ -765,20 +770,50 @@ function mount(root: HTMLElement): void {
             </fieldset>
             <p class="orbital-phase" id="orbital-phase">Galactic field · 6 objects · Earth-centered</p>
             <div class="orbital-fleet" id="orbital-fleet" aria-label="Fleet speeds"></div>
-            <div class="orbital-table-wrap">
-              <table class="orbital-table" aria-live="polite">
-                <caption class="orbital-caption">Resistance corridor vs Earth</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Object</th>
-                    <th scope="col">v (km/s)</th>
-                    <th scope="col">Corridor</th>
-                    <th scope="col">B (nT)</th>
-                  </tr>
-                </thead>
-                <tbody id="orbital-tbody"></tbody>
-              </table>
-            </div>
+            <section class="orbital-data-sheet" aria-labelledby="orbital-sheet-title">
+              <header class="orbital-data-sheet__head">
+                <div class="orbital-data-sheet__head-top">
+                  <h2 class="orbital-data-sheet__title" id="orbital-sheet-title">Intercept assessment</h2>
+                  <span class="orbital-data-sheet__stamp">LIVE</span>
+                </div>
+                <p class="orbital-data-sheet__subtitle">
+                  Resistance corridor · Earth-centered frame · provisional kinematics
+                </p>
+              </header>
+              <div class="orbital-table-wrap">
+                <table
+                  class="orbital-table orbital-table--assessment"
+                  aria-live="polite"
+                  aria-describedby="orbital-sheet-title"
+                >
+                  <caption class="orbital-sr-only">
+                    Objects whose trajectories intersect the Earth resistance corridor; columns are designator,
+                    scalar speed, corridor geometry, and magnetic field along the line of sight.
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col" class="orbital-th">
+                        <span class="orbital-th__main">Designator</span>
+                        <span class="orbital-th__sub">track · catalogue ID</span>
+                      </th>
+                      <th scope="col" class="orbital-th orbital-th--numeric">
+                        <span class="orbital-th__main">Scalar speed</span>
+                        <span class="orbital-th__sub">km · s<sup>−1</sup></span>
+                      </th>
+                      <th scope="col" class="orbital-th">
+                        <span class="orbital-th__main">Corridor geometry</span>
+                        <span class="orbital-th__sub">bearing θ · range ρ (AU)</span>
+                      </th>
+                      <th scope="col" class="orbital-th orbital-th--numeric">
+                        <span class="orbital-th__main">B-field (path)</span>
+                        <span class="orbital-th__sub">nanotesla</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody id="orbital-tbody"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </aside>
         <div class="orbital-radar-panel">
