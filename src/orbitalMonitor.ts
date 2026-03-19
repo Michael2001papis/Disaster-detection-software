@@ -280,6 +280,13 @@ let lastEarthDefenseStandbyHtml = ''
 let lastFrameAnimT = 0
 /** Draw an Earth ring pulse until this animT (ms). */
 let magneticWavePulseUntil = 0
+/** Start time (anim ms) for the current outward burst — span = pulseUntil - burstStart */
+let magneticWaveBurstStartAnimT = 0
+let magneticWaveBurstSpanMs = 780
+/** Sustained shield rings until this track leaves the collision-alert window (after a pulse that did not clear). */
+let magneticWaveShieldTrackNum: number | null = null
+/** After a successful deflection, keep shield-style rings until this anim time (ms). */
+let magneticWaveCelebrationUntilAnimT = 0
 let waveFeedbackText = ''
 let waveFeedbackClearAnimT = 0
 
@@ -756,6 +763,19 @@ function closeRescueModal(): void {
   document.getElementById('orbital-rescue-modal')?.classList.add('orbital-modal--hidden')
 }
 
+function clearMagneticWaveShield(): void {
+  magneticWaveShieldTrackNum = null
+  magneticWaveCelebrationUntilAnimT = 0
+}
+
+function updateMagneticWaveShieldState(animT: number): void {
+  if (magneticWaveShieldTrackNum === null) return
+  const a = asteroids.find((x) => x.num === magneticWaveShieldTrackNum)
+  if (!a || trajectoryClearedImmediateThreat(a)) {
+    magneticWaveShieldTrackNum = null
+  }
+}
+
 function deployMagneticWave(level: 1 | 2 | 3): void {
   if (simulationPaused || phase !== 'space') return
   const threat = findPrimaryEarthCollisionThreat(lastFrameAnimT)
@@ -771,12 +791,16 @@ function deployMagneticWave(level: 1 | 2 | 3): void {
   const Bafter = magneticAlongPath(a.x, a.y, earthX, earthY, lastFrameAnimT, a.magneticBiasNT)
   const sigAfter = formatEmVelSignature(Bafter, speedAfter)
 
-  magneticWavePulseUntil = lastFrameAnimT + 780
+  magneticWaveBurstStartAnimT = lastFrameAnimT
   lastCollisionAlertText = ''
 
   const fb = document.getElementById('orbital-wave-feedback')
 
   if (trajectoryClearedImmediateThreat(a)) {
+    magneticWaveBurstSpanMs = 2400
+    magneticWavePulseUntil = lastFrameAnimT + magneticWaveBurstSpanMs
+    magneticWaveCelebrationUntilAnimT = lastFrameAnimT + magneticWaveBurstSpanMs
+    magneticWaveShieldTrackNum = null
     waveFeedbackText = ''
     waveFeedbackClearAnimT = 0
     if (fb) fb.textContent = ''
@@ -796,6 +820,9 @@ function deployMagneticWave(level: 1 | 2 | 3): void {
     openRescueModal(report)
     simulationPaused = true
   } else {
+    magneticWaveBurstSpanMs = 780
+    magneticWavePulseUntil = lastFrameAnimT + magneticWaveBurstSpanMs
+    magneticWaveShieldTrackNum = a.num
     waveFeedbackText = `Pulse L${level} applied — track still inside intercept window. Use a stronger pulse (L3 = best).`
     waveFeedbackClearAnimT = lastFrameAnimT + 5000
     if (fb) fb.textContent = waveFeedbackText
@@ -873,7 +900,7 @@ function drawEarth(cx: number, cy: number, r: number, pulse: number): void {
 
 function drawMagneticWavePulse(cx: number, cy: number, earthR: number, animT: number): void {
   if (animT >= magneticWavePulseUntil) return
-  const span = 780
+  const span = Math.max(1, magneticWavePulseUntil - magneticWaveBurstStartAnimT)
   const u = Math.max(0, 1 - (magneticWavePulseUntil - animT) / span)
   const alpha = 0.42 * (1 - u) * (1 - u)
   ctx.save()
@@ -887,6 +914,35 @@ function drawMagneticWavePulse(cx: number, cy: number, earthR: number, animT: nu
   ctx.beginPath()
   ctx.arc(cx, cy, earthR + 4 + u * 20, 0, Math.PI * 2)
   ctx.stroke()
+  ctx.restore()
+}
+
+/** Standing magnetospheric waves around Earth while defending a track, or celebration after safe clearance. */
+function drawMagneticWaveShield(cx: number, cy: number, earthR: number, animT: number): void {
+  const celebrating = animT < magneticWaveCelebrationUntilAnimT
+  if (magneticWaveShieldTrackNum === null && !celebrating) return
+  const t = animT * 0.0022
+  const radii = [9, 17, 25, 33, 41]
+  const boost = celebrating ? 0.04 : 0
+  ctx.save()
+  ctx.lineCap = 'round'
+  for (let i = 0; i < radii.length; i++) {
+    const base = radii[i]!
+    const phase = t + i * 1.05
+    const breathe = 1 + 0.045 * Math.sin(phase)
+    const alpha = boost + 0.1 + 0.07 * (0.5 + 0.5 * Math.sin(phase * 1.4))
+    const r = (earthR + base) * breathe
+    ctx.strokeStyle = `rgba(78, 205, 196, ${alpha * 0.85})`
+    ctx.lineWidth = 1.2
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.strokeStyle = `rgba(91, 159, 212, ${alpha * 0.45})`
+    ctx.lineWidth = 0.9
+    ctx.beginPath()
+    ctx.arc(cx, cy, r - 2.5, 0, Math.PI * 2)
+    ctx.stroke()
+  }
   ctx.restore()
 }
 
@@ -1096,6 +1152,8 @@ function drawSpace(animT: number): void {
   }
 
   drawEarth(earthX, earthY, EARTH_R, (Math.sin(animT * 0.002) + 1) * 0.5)
+  updateMagneticWaveShieldState(animT)
+  drawMagneticWaveShield(earthX, earthY, EARTH_R, animT)
   drawMagneticWavePulse(earthX, earthY, EARTH_R, animT)
 
   const threats: ThreatRow[] = []
@@ -1404,6 +1462,9 @@ function goSpace(): void {
   spawnAsteroids(logicalW, logicalH)
   if (phaseLine) phaseLine.textContent = 'Nominal · six-track field · Earth-centered'
   document.querySelector('.orbital-balloon')?.classList.remove('orbital-balloon--hidden')
+  magneticWavePulseUntil = 0
+  magneticWaveBurstStartAnimT = 0
+  clearMagneticWaveShield()
 }
 
 function restart(): void {
@@ -1411,6 +1472,9 @@ function restart(): void {
   simulationPaused = false
   closeImpactModal()
   closeRescueModal()
+  magneticWavePulseUntil = 0
+  magneticWaveBurstStartAnimT = 0
+  clearMagneticWaveShield()
   spawnAsteroids(logicalW, logicalH)
   lastTs = 0
 }
@@ -1522,6 +1586,9 @@ function mountApplication(root: HTMLElement): void {
   lastCollisionAlertText = ''
   lastEarthDefenseStandbyHtml = ''
   magneticWavePulseUntil = 0
+  magneticWaveBurstStartAnimT = 0
+  magneticWaveBurstSpanMs = 780
+  clearMagneticWaveShield()
   waveFeedbackText = ''
   waveFeedbackClearAnimT = 0
   asteroids = []
@@ -1540,6 +1607,24 @@ function mountApplication(root: HTMLElement): void {
                 <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">Sign out</button>
               </div>
             </div>
+            <section class="orbital-mandate" aria-labelledby="orbital-mandate-title">
+              <h3 class="orbital-mandate__title" id="orbital-mandate-title">Humanity safeguard — program vision</h3>
+              <p class="orbital-mandate__tagline">This system connects humanity to the advancement of space.</p>
+              <p class="orbital-mandate__body">
+                Shared progress in orbit depends on <strong>open eyes</strong> as much as new rockets: knowing what
+                crosses Earth’s neighborhood, and rehearsing what to do about it, is how civilisation earns a long
+                future among the planets. A future operational stack would fuse <strong>global NEO surveys</strong>,
+                <strong>precision orbit determination</strong>, and <strong>deflection physics</strong> (kinetic
+                impact, gravity tractor, ion beams, or coordinated pulses) into one timeline: detect early →
+                characterize threat → choose response → verify miss distance. Meteorites and asteroids are the same
+                hazard class at different scales; the goal is <strong>days to decades</strong> of warning and a
+                rehearsed chain of command.
+              </p>
+              <p class="orbital-mandate__foot">
+                This console is a <strong>training and narrative shell</strong> for that idea — not a real planetary
+                defense network.
+              </p>
+            </section>
             <div class="orbital-console-panel orbital-console-panel--sim">
               <div class="orbital-console-panel__label" aria-hidden="true">Simulation control</div>
               <div class="orbital-controls">

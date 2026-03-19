@@ -1,72 +1,76 @@
-# Disaster detection software
+# Disaster detection software · Orbital mission console
 
-Interactive **Earth → galactic monitor** built with [Vite](https://vite.dev/) and TypeScript:
+Static **SPA** (Vite + TypeScript): a **mission-control style** training shell for Earth-centered **NEO-style** surveillance — not operational planetary defense or public alerting.
 
-1. **Earth screen** — primary planet and short briefing; click/tap or press Enter to continue.  
-2. **Galactic view** — six asteroids in continuous motion around a central Earth.  
-3. **Intercept table** — when an asteroid’s forward path passes through the **resistance corridor** (near-Earth intercept tube), a row shows **speed (km/s)**, **collision / corridor geometry**, and **magnetic field (nT)** along the Earth–asteroid path. Use **Restart** to respawn all six bodies.
+**Product framing:** the UI presents the idea that *this system connects humanity to the advancement of space* — shared vigilance near Earth (detection, rehearsal, narrative) alongside exploration. See the in-app **Humanity safeguard — program vision** panel for the full statement.
+
+**Detailed status (features, limits, Hebrew notes):** [`STATUS_REPORT.txt`](./STATUS_REPORT.txt).
+
+---
+
+## Flow
+
+1. **HACHAL gate** — access code entry; session remembered in `sessionStorage` until the tab closes, **Sign out**, or site data cleared. Demo code value is documented in `STATUS_REPORT.txt` (constant `HACHAL_ACCESS_CODE` in `src/orbitalMonitor.ts`).
+2. **Earth intro** — canvas; tap/click or **Enter / Space** to enter the field.
+3. **Mission field** — six tracks (MET/AST by size class), radar canvas, telemetry sidebar:
+   - **Simulation control** — sim rate ×, velocity cap  
+   - **Simulation modifiers** — precision, fallout overlay on Earth, chaos surge, multi-band fallout  
+   - **Status strip** — time / sim× / cap  
+   - **Protect Earth — magnetospheric pulse** — always visible in mission mode; **L1 / L2 / L3** unlock when an Earth **collision-alert** window is active; synthetic deflection + **deflection intercept report** on success; sustained **magnetic shield** rings around Earth until the threat exits the alert window (plus celebration rings after a successful clear)  
+   - **Fleet** — per-track display lights (persisted in `sessionStorage`)  
+   - **NEO corridor occupancy** — live table (class, |v|, corridor LOS, |B|, EM–V); **card layout on narrow viewports** (no horizontal scroll) for phones (~Galaxy S22+ target)  
+4. **Surface impact** — modal + optional fallout list; **Restart / Continue** per buttons.
+
+**Persistence:** provisional designations (`localStorage`), track lights (`sessionStorage`), gate session (`sessionStorage`).
+
+---
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) **20.19+** or **22.12+** (required by Vite 8 — see `.nvmrc` for Vercel)
+- [Node.js](https://nodejs.org/) **20.19+** or **22.12+** (Vite 8 — see `.nvmrc`)
 
 ## Scripts
 
-| Command        | Description              |
-| -------------- | ------------------------ |
-| `npm install`  | Install dependencies     |
-| `npm run dev`  | Start dev server         |
-| `npm run build`| Production build (Vite; used on Vercel) |
-| `npm run typecheck` | TypeScript only (`tsc --noEmit`) |
-| `npm run build:usb` | Same + **relative** asset paths for USB / `file://` |
-| `npm run preview` | Preview production build |
+| Command | Description |
+| -------- | ----------- |
+| `npm install` | Install dependencies |
+| `npm run dev` | Dev server |
+| `npm run build` | Production build (Vercel uses this) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run build:usb` | Build with **relative** `./` base for USB / `file://` |
+| `npm run preview` | Preview `dist/` |
 
 ## Vercel
 
-The build uses **`base: '/'`** when the `VERCEL` env var is set (automatic on Vercel) so JS/CSS load correctly from `*.vercel.app`. **`vercel.json`** sets `outputDirectory` to `dist`.
+`vite.config.ts` uses **`base: '/'`** when `VERCEL` is set. `vercel.json` → `outputDirectory: dist`. Use Node **20.x+** on the project.
 
-In the Vercel project, set **Node.js** to **20.x** (or newer) if builds fail on an older runtime.
-
-## Build for USB or offline copy (static site)
-
-This project is a **static web app**. After a production build, only the output folder is needed to run it—no `node_modules`, no `src/`, no `package.json` on the USB.
-
-### Step 1 — Build
-
-For **USB / offline** (relative paths):
+## USB / offline
 
 ```bash
 npm run build:usb
 ```
 
-For **Vercel** or normal hosting from domain root, use `npm run build` (or let Vercel run it).
+Copy contents of **`dist/`** only. Prefer hosting `dist` on HTTPS for consistent behavior vs `file://`.
 
-Vite writes the site to **`dist/`** (Create React App would use `build/` instead).
-
-### Step 2 — What to copy
-
-**Copy everything inside `dist/`** — you can place those files at the **root of a USB stick** (no extra folder required).
-
-**Do not** copy `src/`, `node_modules/`, or `package.json` for a simple offline handoff; they are not needed to view the built site.
-
-### Step 3 — How to open it
-
-- Try opening **`index.html`** (double-click may work depending on the browser).
-- If scripts or styles fail to load (common with `file://` and browser security rules), **drag `index.html` into a browser window** or use a tiny local static server.
-- For demos and grading (**recommended**): deploy the same `dist` output to **[Vercel](https://vercel.com/)** (or similar). You get a stable URL, no `file://` quirks, and it behaves like a normal website.
-
-**`npm run build:usb`** (or any build without `VERCEL=1`) emits **relative** asset paths for disk/USB. Vercel builds use **`/`** automatically.
-
-## Demo query parameters
-
-- `?mode=empty` — empty monitoring feed
-- `?mode=error` — simulated load failure (with retry)
+---
 
 ## Project layout
 
-- `src/orbitalMonitor.ts` — intro + canvas simulation + threat table + restart
-- `src/main.ts` — app entry
-- `src/app.ts` — earlier list-style demo (not mounted by default)
-- `src/types.ts` — shared types (legacy demo)
-- `src/data/sampleObjects.ts` — sample data (legacy demo)
-- `public/` — static assets (`favicon.svg`, `icons.svg`)
+| Path | Role |
+|------|------|
+| `index.html` | Entry, fonts, theme-color, meta description |
+| `src/main.ts` | Loads CSS, starts monitor |
+| `src/orbitalMonitor.ts` | Gate, intro, canvas sim, UI, modals, waves, table |
+| `src/style.css` | Global + orbital / HACHAL / responsive table |
+| `vite.config.ts` | `base` from `VERCEL` |
+| `STATUS_REPORT.txt` | Long-form software status (Hebrew + technical detail) |
+
+**Legacy (not mounted by default):** `src/app.ts`, `src/types.ts`, `src/data/sampleObjects.ts`.
+
+---
+
+## Limits (read before demoing)
+
+- **2-D** display-plane simulation; not real **TCA** or miss distance.  
+- **Magnetic pulses** and intercept reports are **training fiction**.  
+- **No backend** — all logic runs in the browser.

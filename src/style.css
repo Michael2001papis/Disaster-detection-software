@@ -1048,6 +1048,73 @@ body:has(.orbital-app) {
   color: rgba(140, 185, 225, 0.82);
 }
 
+/* Program vision — humanity / planetary defense concept (training shell) */
+.orbital-mandate {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(91, 159, 212, 0.22);
+  background: rgba(8, 22, 42, 0.45);
+}
+
+.orbital-mandate__title {
+  margin: 0 0 6px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--orb-cool);
+  line-height: 1.35;
+}
+
+.orbital-mandate__tagline {
+  margin: 0 0 10px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--orb-heading);
+  letter-spacing: 0.02em;
+  font-family:
+    'IBM Plex Sans',
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+}
+
+.orbital-mandate__body {
+  margin: 0 0 8px;
+  font-size: 10px;
+  line-height: 1.55;
+  color: var(--orb-text);
+  font-family:
+    'IBM Plex Sans',
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+}
+
+.orbital-mandate__body strong {
+  color: var(--orb-heading);
+  font-weight: 600;
+}
+
+.orbital-mandate__foot {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.45;
+  color: var(--orb-text-dim);
+  font-family:
+    'IBM Plex Sans',
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+}
+
+.orbital-mandate__foot strong {
+  color: var(--orb-text);
+  font-weight: 600;
+}
+
 /* Tier 3+: simulation panels */
 .orbital-console-panel {
   margin-bottom: 14px;
