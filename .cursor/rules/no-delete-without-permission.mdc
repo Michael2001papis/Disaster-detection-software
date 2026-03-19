@@ -1,0 +1,10 @@
+---
+description: No deleting TXT or other files without explicit user permission
+alwaysApply: true
+---
+
+# Deletion and TXT files
+
+- **`.txt` files** (e.g. reports, notes, `STATUS_REPORT.txt`) are **not** disposable build artifacts. **Do not delete, move, or empty them** unless the user **explicitly** names the file and asks to remove or replace it.
+- **Any file or folder deletion** (including `delete_file`, `rm`, cleaning “unused” files, or reverting by deleting) requires **explicit user permission** first. If cleanup seems useful, list what would be removed and ask; do not delete preemptively.
+- Same for **destructive git** operations (see `no-auto-git.mdc` if present): no force-push, hard reset, or branch deletion without being asked.

@@ -275,6 +275,7 @@ let magical: MagicalModes = {
 let lastImpactOverlay: ImpactSnapshot | null = null
 
 let lastCollisionAlertText = ''
+let lastEarthDefenseStandbyHtml = ''
 /** Last animation time from draw loop (for wave actions between frames). */
 let lastFrameAnimT = 0
 /** Draw an Earth ring pulse until this animT (ms). */
@@ -1174,9 +1175,17 @@ function updateTable(threats: ThreatRow[], animT: number): void {
   }
 }
 
+function setWaveButtonsDisabled(disabled: boolean): void {
+  const panel = document.getElementById('orbital-earth-defense')
+  if (!panel) return
+  for (const btn of panel.querySelectorAll<HTMLButtonElement>('[data-wave-level]')) {
+    btn.disabled = disabled
+  }
+}
+
 function updateCollisionAlertBanner(animT: number): void {
-  const el = document.getElementById('orbital-collision-alert')
-  const textEl = document.getElementById('orbital-collision-alert-text')
+  const el = document.getElementById('orbital-earth-defense')
+  const textEl = document.getElementById('orbital-earth-defense-status')
   if (!el || !textEl) return
 
   const fb = document.getElementById('orbital-wave-feedback')
@@ -1194,41 +1203,51 @@ function updateCollisionAlertBanner(animT: number): void {
 
   if (simulationPaused || phase !== 'space') {
     clearSeverity()
-    el.classList.add('orbital-collision-alert--hidden')
-    el.setAttribute('hidden', '')
+    el.classList.add('orbital-earth-defense--dormant')
+    el.classList.remove('orbital-earth-defense--standby')
     textEl.innerHTML = ''
     lastCollisionAlertText = ''
+    lastEarthDefenseStandbyHtml = ''
+    setWaveButtonsDisabled(true)
     return
   }
+
+  el.classList.remove('orbital-earth-defense--dormant')
 
   const best = findPrimaryEarthCollisionThreat(animT)
 
   if (!best) {
     clearSeverity()
-    el.classList.add('orbital-collision-alert--hidden')
-    el.setAttribute('hidden', '')
-    textEl.innerHTML = ''
+    el.classList.add('orbital-earth-defense--standby')
+    setWaveButtonsDisabled(true)
     lastCollisionAlertText = ''
+    const standbyHtml = `<span class="orbital-earth-defense__standby-label">Intercept status</span> · No meteorite or asteroid on an <strong>Earth collision</strong> trajectory inside the alert window (<span class="orbital-mono">≈${COLLISION_ALERT_TTI_MAX_S} s</span> sim time, wall clock at current sim×). <strong>Detection</strong>: six MET/AST tracks on radar; <strong>NEO corridor table</strong> lists objects crossing the operational gate (class, speed, |B|, EM–V). Pulse banks stand by — they <strong>arm automatically</strong> when the window above is breached.`
+    if (standbyHtml !== lastEarthDefenseStandbyHtml) {
+      textEl.innerHTML = standbyHtml
+      lastEarthDefenseStandbyHtml = standbyHtml
+    }
     return
   }
 
+  lastEarthDefenseStandbyHtml = ''
+  el.classList.remove('orbital-earth-defense--standby')
   clearSeverity()
   if (best.tti <= 4.5) el.classList.add('orbital-collision-alert--severity-critical')
   else el.classList.add('orbital-collision-alert--severity-warning')
+
+  setWaveButtonsDisabled(false)
 
   const sig = formatEmVelSignature(best.magneticNT, best.speedKmS)
   const cls = formatBodyClassLabel(best.a.bodyClass)
   const dM = equivDiameterMFromRadarR(best.a.r)
   const ttiStr = best.tti.toFixed(magical.precision ? 2 : 1)
   const bPrec = magical.precision ? 2 : 1
-  const html = `<span class="orbital-collision-alert__label">Earth collision alert</span> · Track <span class="orbital-mono">#${best.a.num}</span> <span class="orbital-mono">${escapeHtml(best.a.name)}</span> · ${cls} · Ø<sub>est</sub> <span class="orbital-mono">${dM}</span> m · TTI <span class="orbital-mono">≈${ttiStr}</span> s (wall, at current sim×) · <span class="orbital-mono">|v| ${formatSpeed(best.speedKmS)} km/s</span> · <span class="orbital-mono">|B| ${best.magneticNT.toFixed(bPrec)} nT</span> · EM–V ID <span class="orbital-mono">${escapeHtml(sig)}</span>`
+  const html = `<span class="orbital-collision-alert__label">Earth collision — deploy pulse</span> · Track <span class="orbital-mono">#${best.a.num}</span> <span class="orbital-mono">${escapeHtml(best.a.name)}</span> · ${cls} · Ø<sub>est</sub> <span class="orbital-mono">${dM}</span> m · TTI <span class="orbital-mono">≈${ttiStr}</span> s (wall, at current sim×) · <span class="orbital-mono">|v| ${formatSpeed(best.speedKmS)} km/s</span> · <span class="orbital-mono">|B| ${best.magneticNT.toFixed(bPrec)} nT</span> · EM–V ID <span class="orbital-mono">${escapeHtml(sig)}</span> · Use <strong>L1–L3</strong> below to deflect.`
 
   if (html !== lastCollisionAlertText) {
     textEl.innerHTML = html
     lastCollisionAlertText = html
   }
-  el.classList.remove('orbital-collision-alert--hidden')
-  el.removeAttribute('hidden')
 }
 
 function updateFleetReadout(animT: number): void {
@@ -1501,6 +1520,7 @@ function mountApplication(root: HTMLElement): void {
   simulationPaused = false
   lastImpactOverlay = null
   lastCollisionAlertText = ''
+  lastEarthDefenseStandbyHtml = ''
   magneticWavePulseUntil = 0
   waveFeedbackText = ''
   waveFeedbackClearAnimT = 0
@@ -1546,30 +1566,42 @@ function mountApplication(root: HTMLElement): void {
               <span class="orbital-status-strip__dot" aria-hidden="true"></span>
               <p class="orbital-phase" id="orbital-phase">Nominal · six-track field · Earth-centered</p>
             </div>
-            <div
-              id="orbital-collision-alert"
-              class="orbital-collision-alert orbital-collision-alert--hidden"
-              role="alert"
-              aria-live="assertive"
-              hidden
+            <section
+              id="orbital-earth-defense"
+              class="orbital-earth-defense orbital-collision-alert orbital-earth-defense--dormant"
+              role="region"
+              aria-labelledby="orbital-earth-defense-heading"
             >
-              <div id="orbital-collision-alert-text" class="orbital-collision-alert__text"></div>
-              <p class="orbital-collision-alert__pulse-hint">
-                Magnetospheric pulse — limb-coupled wave on the illuminated sphere to perturb trajectory (simulation).
+              <h3 class="orbital-earth-defense__heading" id="orbital-earth-defense-heading">Protect Earth — magnetospheric pulse</h3>
+              <p class="orbital-earth-defense__intro-hint">
+                <strong>Detection</strong> · Six provisional tracks on radar (meteorite MET vs asteroid AST by estimated size).
+                The <strong>NEO corridor occupancy</strong> table lists any object crossing the Earth-fixed gate with speed,
+                magnetic path |B|, and EM–V signature. <strong>Defense</strong> · When an impact with Earth is inside the
+                time-to-intercept alert window, pulse buttons below <strong>unlock</strong> — fire <span class="orbital-mono">L1→L3</span>
+                (strongest) to deflect in this training simulation; success opens an intercept report.
               </p>
-              <div class="orbital-collision-alert__actions" role="group" aria-label="Magnetic wave intensity levels">
-                <button type="button" class="orbital-wave-btn" data-wave-level="1">
-                  Wave <span class="orbital-mono">L1</span><span class="orbital-wave-btn__sub">low</span>
+              <div
+                id="orbital-earth-defense-status"
+                class="orbital-earth-defense__status orbital-collision-alert__text"
+                role="status"
+                aria-live="polite"
+              ></div>
+              <p class="orbital-collision-alert__pulse-hint">
+                Magnetospheric pulse — in-plane velocity rotation toward Earth limb; preserves speed magnitude (simulation).
+              </p>
+              <div class="orbital-collision-alert__actions" role="group" aria-label="Protect Earth — magnetic pulse level">
+                <button type="button" class="orbital-wave-btn" data-wave-level="1" disabled>
+                  Protect · <span class="orbital-mono">L1</span><span class="orbital-wave-btn__sub">low pulse</span>
                 </button>
-                <button type="button" class="orbital-wave-btn" data-wave-level="2">
-                  Wave <span class="orbital-mono">L2</span><span class="orbital-wave-btn__sub">medium</span>
+                <button type="button" class="orbital-wave-btn" data-wave-level="2" disabled>
+                  Protect · <span class="orbital-mono">L2</span><span class="orbital-wave-btn__sub">medium pulse</span>
                 </button>
-                <button type="button" class="orbital-wave-btn orbital-wave-btn--max" data-wave-level="3">
-                  Wave <span class="orbital-mono">L3</span><span class="orbital-wave-btn__sub">maximum — best deflection</span>
+                <button type="button" class="orbital-wave-btn orbital-wave-btn--max" data-wave-level="3" disabled>
+                  Protect · <span class="orbital-mono">L3</span><span class="orbital-wave-btn__sub">maximum deflection</span>
                 </button>
               </div>
               <p id="orbital-wave-feedback" class="orbital-wave-feedback" aria-live="polite"></p>
-            </div>
+            </section>
             <p class="orbital-fleet__legend">Track display light · radar blip, corridor line, table marker</p>
             <div class="orbital-fleet" id="orbital-fleet" aria-label="Fleet status and per-track lights"></div>
             <section class="orbital-data-sheet orbital-data-sheet--s3" aria-labelledby="orbital-sheet-title">
@@ -1689,7 +1721,7 @@ function mountApplication(root: HTMLElement): void {
   phaseLine = root.querySelector('#orbital-phase')
 
   fleetEl?.addEventListener('click', onFleetLightPointer)
-  root.querySelector('#orbital-collision-alert')?.addEventListener('click', onMagneticWaveClick)
+  root.querySelector('#orbital-earth-defense')?.addEventListener('click', onMagneticWaveClick)
 
   root.querySelector('#orbital-restart')?.addEventListener('click', () => restart())
 
