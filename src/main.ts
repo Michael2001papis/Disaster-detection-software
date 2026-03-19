@@ -1,4 +1,4 @@
 import './style.css'
-import { startDemo } from './app'
+import { startOrbitalMonitor } from './orbitalMonitor'
 
-startDemo()
+startOrbitalMonitor()

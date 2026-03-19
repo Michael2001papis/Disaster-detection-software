@@ -1,6 +1,10 @@
 # Disaster detection software
 
-Initial demo: a **Disaster Detection & Astronomical Monitoring** console built with [Vite](https://vite.dev/) and TypeScript.
+Interactive **Earth → galactic monitor** built with [Vite](https://vite.dev/) and TypeScript:
+
+1. **Earth screen** — primary planet and short briefing; click/tap or press Enter to continue.  
+2. **Galactic view** — six asteroids in continuous motion around a central Earth.  
+3. **Intercept table** — when an asteroid’s forward path passes through the **resistance corridor** (near-Earth intercept tube), a row shows **speed (km/s)**, **collision / corridor geometry**, and **magnetic field (nT)** along the Earth–asteroid path. Use **Restart** to respawn all six bodies.
 
 ## Requirements
 
@@ -48,7 +52,9 @@ This repo’s Vite config uses **`base: './'`** so asset paths stay **relative**
 
 ## Project layout
 
-- `src/app.ts` — UI state, rendering, demo flow
-- `src/types.ts` — shared types
-- `src/data/sampleObjects.ts` — sample alert data
+- `src/orbitalMonitor.ts` — intro + canvas simulation + threat table + restart
+- `src/main.ts` — app entry
+- `src/app.ts` — earlier list-style demo (not mounted by default)
+- `src/types.ts` — shared types (legacy demo)
+- `src/data/sampleObjects.ts` — sample data (legacy demo)
 - `public/` — static assets (`favicon.svg`, `icons.svg`)
