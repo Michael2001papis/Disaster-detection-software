@@ -811,9 +811,10 @@ function onMagneticWaveClick(e: Event): void {
 
 function drawStars(): void {
   for (const s of stars) {
-    ctx.fillStyle = `rgba(226, 232, 240, ${s.o})`
+    const cool = 0.72 + Math.sin(s.x * 0.01 + s.y * 0.01) * 0.08
+    ctx.fillStyle = `rgba(${165 + cool * 40}, ${195 + cool * 35}, ${230}, ${s.o * 0.42})`
     ctx.beginPath()
-    ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2)
+    ctx.arc(s.x, s.y, s.s * 0.92, 0, Math.PI * 2)
     ctx.fill()
   }
 }
@@ -845,21 +846,27 @@ function drawFalloutOnEarth(cx: number, cy: number, r: number, snap: ImpactSnaps
 }
 
 function drawEarth(cx: number, cy: number, r: number, pulse: number): void {
-  const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, r * 0.1, cx, cy, r * 1.2)
-  g.addColorStop(0, '#5eb3d4')
-  g.addColorStop(0.35, '#2a6b8f')
-  g.addColorStop(0.55, '#1d4d3a')
-  g.addColorStop(0.72, '#2d6b4a')
-  g.addColorStop(1, '#0a1f2e')
+  const g = ctx.createRadialGradient(cx - r * 0.32, cy - r * 0.36, r * 0.08, cx, cy, r * 1.15)
+  g.addColorStop(0, '#6eb8d8')
+  g.addColorStop(0.28, '#3a7a9e')
+  g.addColorStop(0.5, '#1e4a5c')
+  g.addColorStop(0.68, '#1a3d4a')
+  g.addColorStop(1, '#0a1622')
   ctx.fillStyle = g
   ctx.beginPath()
   ctx.arc(cx, cy, r, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.strokeStyle = `rgba(120, 200, 255, ${0.25 + pulse * 0.15})`
+  const rim = 0.18 + pulse * 0.12
+  ctx.strokeStyle = `rgba(110, 185, 220, ${rim})`
+  ctx.lineWidth = 1.25
+  ctx.beginPath()
+  ctx.arc(cx, cy, r + 2.5 + pulse * 4, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.strokeStyle = `rgba(70, 140, 190, ${rim * 0.35})`
   ctx.lineWidth = 2
   ctx.beginPath()
-  ctx.arc(cx, cy, r + 4 + pulse * 6, 0, Math.PI * 2)
+  ctx.arc(cx, cy, r + 5 + pulse * 5, 0, Math.PI * 2)
   ctx.stroke()
 }
 
@@ -867,15 +874,15 @@ function drawMagneticWavePulse(cx: number, cy: number, earthR: number, animT: nu
   if (animT >= magneticWavePulseUntil) return
   const span = 780
   const u = Math.max(0, 1 - (magneticWavePulseUntil - animT) / span)
-  const alpha = 0.5 * (1 - u) * (1 - u)
+  const alpha = 0.42 * (1 - u) * (1 - u)
   ctx.save()
-  ctx.strokeStyle = `rgba(34, 197, 94, ${alpha})`
-  ctx.lineWidth = 2.5
+  ctx.strokeStyle = `rgba(78, 205, 196, ${alpha})`
+  ctx.lineWidth = 2
   ctx.beginPath()
   ctx.arc(cx, cy, earthR + 6 + u * 28, 0, Math.PI * 2)
   ctx.stroke()
-  ctx.strokeStyle = `rgba(59, 130, 246, ${alpha * 0.55})`
-  ctx.lineWidth = 1.5
+  ctx.strokeStyle = `rgba(91, 159, 212, ${alpha * 0.65})`
+  ctx.lineWidth = 1.35
   ctx.beginPath()
   ctx.arc(cx, cy, earthR + 4 + u * 20, 0, Math.PI * 2)
   ctx.stroke()
@@ -898,7 +905,7 @@ function drawAsteroid(a: Asteroid, spacePhase: boolean): void {
 
   ctx.save()
   ctx.shadowColor = L.glow
-  ctx.shadowBlur = 14
+  ctx.shadowBlur = 7
   ctx.fillStyle = L.fill
   ctx.beginPath()
   ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2)
@@ -944,42 +951,60 @@ function drawAsteroid(a: Asteroid, spacePhase: boolean): void {
 function drawIntro(animT: number): void {
   const w = logicalW
   const h = logicalH
+  const cx = w / 2
+  const cyIntro = h * 0.42
+  const rg = ctx.createRadialGradient(cx, cyIntro * 0.85, 0, cx, cyIntro, Math.max(w, h) * 0.72)
+  rg.addColorStop(0, 'rgba(14, 32, 58, 0.55)')
+  rg.addColorStop(0.45, 'rgba(5, 12, 26, 1)')
+  rg.addColorStop(1, '#02040a')
+  ctx.fillStyle = rg
+  ctx.fillRect(0, 0, w, h)
   const g = ctx.createLinearGradient(0, 0, 0, h)
-  g.addColorStop(0, '#070b14')
-  g.addColorStop(0.5, '#0c1224')
-  g.addColorStop(1, '#050810')
+  g.addColorStop(0, 'rgba(8, 22, 42, 0.9)')
+  g.addColorStop(0.45, 'transparent')
+  g.addColorStop(1, 'rgba(2, 6, 14, 1)')
   ctx.fillStyle = g
   ctx.fillRect(0, 0, w, h)
 
   drawStars()
 
-  const cx = w / 2
-  const cy = h * 0.42
+  const orbitR = Math.min(w, h) * 0.36
+  ctx.save()
+  ctx.strokeStyle = 'rgba(100, 150, 195, 0.07)'
+  ctx.lineWidth = 1
+  ctx.setLineDash([4, 14])
+  ctx.beginPath()
+  ctx.ellipse(cx, cyIntro, orbitR * 1.02, orbitR * 0.88, 0, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.restore()
+
   const r = Math.min(w, h) * 0.14
   const pulse = (Math.sin(animT * 0.003) + 1) * 0.5
-  drawEarth(cx, cy, r, pulse)
+  drawEarth(cx, cyIntro, r, pulse)
 
-  ctx.fillStyle = 'rgba(248, 250, 252, 0.92)'
-  ctx.font = `700 ${Math.max(22, w * 0.045)}px system-ui, Segoe UI, sans-serif`
+  const titlePx = Math.max(22, w * 0.042)
+  ctx.fillStyle = 'rgba(232, 238, 245, 0.94)'
+  ctx.font = `600 ${titlePx}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
   ctx.textAlign = 'center'
-  ctx.fillText('Earth — primary object', cx, cy + r + 48)
+  ctx.fillText('Earth — primary object', cx, cyIntro + r + 48)
 
-  ctx.fillStyle = 'rgba(148, 163, 184, 0.95)'
-  ctx.font = `400 ${Math.max(14, w * 0.024)}px system-ui, Segoe UI, sans-serif`
-  ctx.fillText('Galactic monitoring deploys after you continue', cx, cy + r + 78)
+  ctx.fillStyle = 'rgba(148, 170, 198, 0.88)'
+  ctx.font = `400 ${Math.max(13, w * 0.022)}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
+  ctx.fillText('Orbital surveillance stack arms after you continue.', cx, cyIntro + r + 76)
 
-  ctx.fillStyle = 'rgba(59, 130, 246, 0.88)'
-  ctx.font = `600 ${Math.max(13, w * 0.022)}px system-ui, Segoe UI, sans-serif`
-  ctx.fillText('Click or tap anywhere to enter deep space', cx, h - 56)
+  ctx.fillStyle = 'rgba(120, 175, 220, 0.9)'
+  ctx.font = `500 ${Math.max(12, w * 0.02)}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
+  ctx.fillText('Tap or press Enter / Space to enter the mission field', cx, h - 52)
 }
 
 function drawCorridorLine(ax: number, ay: number, ex: number, ey: number, lightId: number): void {
   const L = getTrackLight(lightId)
   ctx.save()
-  ctx.globalAlpha = 0.78
+  ctx.globalAlpha = 0.62
   ctx.strokeStyle = L.stroke
-  ctx.lineWidth = 2
-  ctx.setLineDash([6, 6])
+  ctx.lineWidth = 1.35
+  ctx.setLineDash([5, 7])
   ctx.beginPath()
   ctx.moveTo(ax, ay)
   ctx.lineTo(ex, ey)
@@ -989,16 +1014,17 @@ function drawCorridorLine(ax: number, ay: number, ex: number, ey: number, lightI
 }
 
 function drawRadarGrille(cx: number, cy: number, radius: number, animT: number): void {
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius)
-  g.addColorStop(0, 'rgba(6, 12, 10, 0.15)')
-  g.addColorStop(0.85, 'rgba(6, 20, 14, 0.35)')
-  g.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
+  const g = ctx.createRadialGradient(cx, cy, radius * 0.08, cx, cy, radius)
+  g.addColorStop(0, 'rgba(18, 40, 68, 0.22)')
+  g.addColorStop(0.55, 'rgba(6, 14, 28, 0.38)')
+  g.addColorStop(0.92, 'rgba(2, 6, 14, 0.72)')
+  g.addColorStop(1, 'rgba(0, 0, 0, 0.5)')
   ctx.fillStyle = g
   ctx.beginPath()
   ctx.arc(cx, cy, radius, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.strokeStyle = 'rgba(34, 197, 94, 0.2)'
+  ctx.strokeStyle = 'rgba(95, 145, 190, 0.14)'
   ctx.lineWidth = 1
   for (let i = 1; i <= 4; i++) {
     ctx.beginPath()
@@ -1006,6 +1032,7 @@ function drawRadarGrille(cx: number, cy: number, radius: number, animT: number):
     ctx.stroke()
   }
 
+  ctx.strokeStyle = 'rgba(120, 165, 210, 0.1)'
   ctx.beginPath()
   ctx.moveTo(cx - radius, cy)
   ctx.lineTo(cx + radius, cy)
@@ -1013,15 +1040,15 @@ function drawRadarGrille(cx: number, cy: number, radius: number, animT: number):
   ctx.lineTo(cx, cy + radius)
   ctx.stroke()
 
-  const sweep = (animT * 0.0012) % (Math.PI * 2)
+  const sweep = (animT * 0.00095) % (Math.PI * 2)
   const grd = ctx.createLinearGradient(cx, cy, cx + Math.cos(sweep) * radius, cy + Math.sin(sweep) * radius)
-  grd.addColorStop(0, 'rgba(34, 197, 94, 0.12)')
-  grd.addColorStop(0.35, 'rgba(34, 197, 94, 0.035)')
-  grd.addColorStop(1, 'rgba(34, 197, 94, 0)')
+  grd.addColorStop(0, 'rgba(91, 159, 212, 0.09)')
+  grd.addColorStop(0.4, 'rgba(78, 205, 196, 0.04)')
+  grd.addColorStop(1, 'rgba(91, 159, 212, 0)')
   ctx.fillStyle = grd
   ctx.beginPath()
   ctx.moveTo(cx, cy)
-  ctx.arc(cx, cy, radius, sweep - 0.45, sweep + 0.02)
+  ctx.arc(cx, cy, radius, sweep - 0.38, sweep + 0.02)
   ctx.closePath()
   ctx.fill()
 }
@@ -1030,13 +1057,37 @@ function drawSpace(animT: number): void {
   lastFrameAnimT = animT
   const w = logicalW
   const h = logicalH
-  ctx.fillStyle = '#040a08'
-  ctx.fillRect(0, 0, w, h)
-  drawStars()
-
   earthX = w / 2
   earthY = h / 2
   const radarR = Math.min(w, h) / 2 - 6
+
+  const deep = ctx.createRadialGradient(earthX, earthY, radarR * 0.15, earthX, earthY, Math.max(w, h) * 0.72)
+  deep.addColorStop(0, 'rgba(10, 28, 52, 0.5)')
+  deep.addColorStop(0.5, 'rgba(3, 10, 22, 1)')
+  deep.addColorStop(1, '#010308')
+  ctx.fillStyle = deep
+  ctx.fillRect(0, 0, w, h)
+  const vignette = ctx.createRadialGradient(earthX, earthY, radarR * 0.4, earthX, earthY, Math.max(w, h) * 0.65)
+  vignette.addColorStop(0, 'transparent')
+  vignette.addColorStop(1, 'rgba(0, 0, 0, 0.38)')
+  ctx.fillStyle = vignette
+  ctx.fillRect(0, 0, w, h)
+
+  drawStars()
+
+  ctx.save()
+  ctx.strokeStyle = 'rgba(80, 125, 170, 0.06)'
+  ctx.lineWidth = 1
+  ctx.setLineDash([3, 12])
+  for (let k = 0; k < 3; k++) {
+    const rr = radarR * (0.52 + k * 0.16)
+    ctx.beginPath()
+    ctx.arc(earthX, earthY, rr, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+  ctx.setLineDash([])
+  ctx.restore()
+
   drawRadarGrille(earthX, earthY, radarR, animT)
 
   if (lastImpactOverlay) {
@@ -1078,7 +1129,7 @@ function updateTable(threats: ThreatRow[], animT: number): void {
     const rows = threats
       .map(
         (t) => `
-      <tr class="orbital-table__row">
+      <tr class="orbital-table__row${t.speedKmS >= 4.85 ? ' orbital-table__row--hot' : ''}">
         <td class="orbital-table__cell orbital-table__cell--designator orbital-mono orbital-table__cell--with-light">
           <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Track display light" aria-hidden="true"></span>
           <span class="orbital-table__designator-text">${escapeHtml(t.label)}</span>
@@ -1122,7 +1173,15 @@ function updateCollisionAlertBanner(animT: number): void {
     if (fb) fb.textContent = ''
   }
 
+  const clearSeverity = (): void => {
+    el.classList.remove(
+      'orbital-collision-alert--severity-warning',
+      'orbital-collision-alert--severity-critical',
+    )
+  }
+
   if (simulationPaused || phase !== 'space') {
+    clearSeverity()
     el.classList.add('orbital-collision-alert--hidden')
     el.setAttribute('hidden', '')
     textEl.innerHTML = ''
@@ -1133,12 +1192,17 @@ function updateCollisionAlertBanner(animT: number): void {
   const best = findPrimaryEarthCollisionThreat(animT)
 
   if (!best) {
+    clearSeverity()
     el.classList.add('orbital-collision-alert--hidden')
     el.setAttribute('hidden', '')
     textEl.innerHTML = ''
     lastCollisionAlertText = ''
     return
   }
+
+  clearSeverity()
+  if (best.tti <= 4.5) el.classList.add('orbital-collision-alert--severity-critical')
+  else el.classList.add('orbital-collision-alert--severity-warning')
 
   const sig = formatEmVelSignature(best.magneticNT, best.speedKmS)
   const cls = formatBodyClassLabel(best.a.bodyClass)
@@ -1307,7 +1371,7 @@ function goSpace(): void {
   document.getElementById('orbital-workspace')?.classList.add('orbital-workspace--split')
   resize()
   spawnAsteroids(logicalW, logicalH)
-  if (phaseLine) phaseLine.textContent = 'Galactic field · 6 objects · Earth-centered'
+  if (phaseLine) phaseLine.textContent = 'Nominal · six-track field · Earth-centered'
   document.querySelector('.orbital-balloon')?.classList.remove('orbital-balloon--hidden')
 }
 
@@ -1382,7 +1446,7 @@ function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
       <div class="hachal-gate__panel">
         <p class="hachal-gate__eyebrow">Restricted · HACHAL</p>
         <h1 class="hachal-gate__title">HACHAL System</h1>
-        <p class="hachal-gate__sub">Enter access code to activate the console.</p>
+        <p class="hachal-gate__sub">Authorized credentials only. Entry is logged to this session.</p>
         <form class="hachal-gate__form" id="hachal-login-form" autocomplete="off">
           <label class="hachal-gate__label" for="hachal-password">Access code</label>
           <input
@@ -1438,32 +1502,38 @@ function mountApplication(root: HTMLElement): void {
           <div class="orbital-balloon__tail" aria-hidden="true"></div>
           <div class="orbital-balloon__inner">
             <div class="orbital-balloon__header">
-              <span class="orbital-balloon__badge">HACHAL · orbital surveillance</span>
+              <span class="orbital-balloon__badge">HACHAL · orbital mission console</span>
               <div class="orbital-balloon__header-actions">
                 <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
                 <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">Sign out</button>
               </div>
             </div>
-            <div class="orbital-controls">
+            <div class="orbital-console-panel orbital-console-panel--sim">
+              <div class="orbital-console-panel__label" aria-hidden="true">Simulation control</div>
+              <div class="orbital-controls">
               <label class="orbital-control">
-                <span>Sim speed ×</span>
+                <span class="orbital-control__label">Sim speed ×</span>
                 <input type="range" id="orbital-sim-scale" min="0.15" max="2" step="0.05" value="1" />
-                <span class="orbital-mono" id="orbital-sim-scale-val">1.00</span>
+                <span class="orbital-control__value orbital-mono" id="orbital-sim-scale-val">1.00</span>
               </label>
               <label class="orbital-control">
-                <span>Velocity cap</span>
+                <span class="orbital-control__label">Velocity cap</span>
                 <input type="range" id="orbital-vcap" min="55" max="175" step="1" value="130" />
-                <span class="orbital-mono" id="orbital-vcap-val">130</span>
+                <span class="orbital-control__value orbital-mono" id="orbital-vcap-val">130</span>
               </label>
+              </div>
             </div>
-            <fieldset class="orbital-modes">
-              <legend>Magical modes <span class="orbital-modes__hint">(combine freely)</span></legend>
+            <fieldset class="orbital-modes orbital-console-panel orbital-console-panel--modes">
+              <legend>Simulation modifiers <span class="orbital-modes__hint">(training overlays)</span></legend>
               <label class="orbital-mode"><input type="checkbox" id="mode-precision" /> Precision readout</label>
               <label class="orbital-mode"><input type="checkbox" id="mode-fallout" /> Fallout map on Earth</label>
               <label class="orbital-mode"><input type="checkbox" id="mode-chaos" /> Chaos / self-destruct surge</label>
               <label class="orbital-mode"><input type="checkbox" id="mode-multizone" /> Multi-band fallout</label>
             </fieldset>
-            <p class="orbital-phase" id="orbital-phase">Galactic field · 6 objects · Earth-centered</p>
+            <div class="orbital-status-strip" role="status" aria-live="polite">
+              <span class="orbital-status-strip__dot" aria-hidden="true"></span>
+              <p class="orbital-phase" id="orbital-phase">Nominal · six-track field · Earth-centered</p>
+            </div>
             <div
               id="orbital-collision-alert"
               class="orbital-collision-alert orbital-collision-alert--hidden"
@@ -1495,7 +1565,7 @@ function mountApplication(root: HTMLElement): void {
               <header class="orbital-data-sheet__head">
                 <div class="orbital-data-sheet__head-top">
                   <h2 class="orbital-data-sheet__title" id="orbital-sheet-title">
-                    NEO corridor occupancy
+                    NEO corridor occupancy — live
                   </h2>
                   <span class="orbital-data-sheet__stamp" title="Live telemetry refresh">LIVE · REFRESH</span>
                 </div>
@@ -1555,10 +1625,9 @@ function mountApplication(root: HTMLElement): void {
                     <tr class="orbital-table__foot">
                       <td colspan="6" id="orbital-sheet-foot">
                         <span class="orbital-table__foot-line"
-                          ><strong>Protocol</strong> · Simulated conjunction-style corridor filter with predictive Earth
-                          intercept timing (display-plane geometry). Magnetospheric pulse deflection and intercept reports
-                          are synthetic training aids. Not a miss-distance or operational TCA solution. For training /
-                          demonstration — not for operational hazard notification or public alert.</span
+                          ><strong>Disclaimer</strong> · Synthetic corridor filter and intercept timing in the display
+                          plane only. Pulse deflection and reports are training aids — not operational TCA, miss distance,
+                          or public alert.</span
                         >
                       </td>
                     </tr>
