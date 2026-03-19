@@ -7,6 +7,11 @@
 const HACHAL_SESSION_KEY = 'hachal-system-session'
 const HACHAL_ACCESS_CODE = '102030'
 
+/** Onboarding: step-by-step tour; `skip` disables auto-launch; `rerun-next` shows tour once on next visit. */
+const TUTORIAL_PREF_SKIP_KEY = 'hachal-tutorial-pref-skip'
+const TUTORIAL_DONE_KEY = 'hachal-tutorial-completed'
+const TUTORIAL_RERUN_NEXT_KEY = 'hachal-tutorial-rerun-next'
+
 /** Issued NEO-style designations — persisted so the same string never appears twice for this profile. */
 const USED_DESIGNATIONS_KEY = 'hachal-neo-designations'
 const DESIGNATION_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -1467,6 +1472,285 @@ function goSpace(): void {
   clearMagneticWaveShield()
 }
 
+let orbitalTutorialCleanup: (() => void) | null = null
+
+function shouldAutoStartOrbitalTutorial(): boolean {
+  try {
+    if (localStorage.getItem(TUTORIAL_PREF_SKIP_KEY) === '1') return false
+    if (localStorage.getItem(TUTORIAL_RERUN_NEXT_KEY) === '1') return true
+    if (localStorage.getItem(TUTORIAL_DONE_KEY) !== '1') return true
+  } catch {
+    return true
+  }
+  return false
+}
+
+function persistTutorialCompletion(skipForever: boolean, rerunNextVisit: boolean): void {
+  try {
+    localStorage.setItem(TUTORIAL_DONE_KEY, '1')
+    if (skipForever) {
+      localStorage.setItem(TUTORIAL_PREF_SKIP_KEY, '1')
+      localStorage.removeItem(TUTORIAL_RERUN_NEXT_KEY)
+    } else if (rerunNextVisit) {
+      localStorage.removeItem(TUTORIAL_PREF_SKIP_KEY)
+      localStorage.setItem(TUTORIAL_RERUN_NEXT_KEY, '1')
+    } else {
+      localStorage.removeItem(TUTORIAL_PREF_SKIP_KEY)
+      localStorage.removeItem(TUTORIAL_RERUN_NEXT_KEY)
+    }
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+type OrbitalTutorialStep = {
+  title: string
+  body: string
+  targetSelector: string | null
+  /** Step advances only via this control (not primary Next). */
+  primaryEnterMission?: boolean
+}
+
+const ORBITAL_TUTORIAL_STEPS: readonly OrbitalTutorialStep[] = [
+  {
+    title: 'Welcome to the orbital mission console',
+    body: 'This is a training shell for Earth-centered near-Earth object awareness: radar tracks, corridor telemetry, and simulated protect-Earth pulses. Use the arrows below to move through the tour.',
+    targetSelector: null,
+  },
+  {
+    title: 'Earth-centered radar (intro)',
+    body: 'The large scope is the geocentric radar plane. You will command six provisional meteorite and asteroid tracks once you enter the mission field.',
+    targetSelector: '#orbital-radar-bezel',
+  },
+  {
+    title: 'Enter the mission field',
+    body: 'Tap the radar, or press Enter or Space, to leave the intro and open the full console — radar beside controls, fleet, and the live NEO corridor table. You can also use the button below.',
+    targetSelector: '#orbital-radar-bezel',
+    primaryEnterMission: true,
+  },
+  {
+    title: 'Console header',
+    body: 'Tour reopens this guide anytime. Restart respawns all tracks. Sign out clears this browser tab’s session and returns to the access gate.',
+    targetSelector: '.orbital-balloon__header-actions',
+  },
+  {
+    title: 'Program vision',
+    body: 'The mandate block states what this system represents: connecting humanity to space advancement. It is narrative context, not live telemetry.',
+    targetSelector: '.orbital-mandate',
+  },
+  {
+    title: 'Simulation control',
+    body: 'Sim speed × stretches or compresses simulated time. Velocity cap limits how fast tracks may move in the plane — useful for training pace.',
+    targetSelector: '.orbital-console-panel--sim',
+  },
+  {
+    title: 'Simulation modifiers',
+    body: 'Optional overlays: finer numeric readouts, fallout shading on Earth, chaotic velocity surges, and multi-band fallout when impacts occur.',
+    targetSelector: '.orbital-console-panel--modes',
+  },
+  {
+    title: 'Status strip',
+    body: 'The line below summarizes phase and field state (nominal, collision alert, etc.). It updates as the simulation runs.',
+    targetSelector: '.orbital-status-strip',
+  },
+  {
+    title: 'Protect Earth — magnetospheric pulse',
+    body: 'Detection uses radar and the corridor table. When a track breaches the Earth collision-alert window, L1–L3 unlock. Stronger pulses cost more deflection margin in this training model. Success yields an intercept report; shields may animate until the threat clears.',
+    targetSelector: '#orbital-earth-defense',
+  },
+  {
+    title: 'Fleet and display lights',
+    body: 'Each track has a color used on the radar blip, corridor line, and table marker. Choices persist for this browser session.',
+    targetSelector: '#orbital-fleet',
+  },
+  {
+    title: 'NEO corridor occupancy table',
+    body: 'Lists objects crossing the operational gate: designation, class and size, speed, corridor geometry, |B| along path, and EM–V signature. On narrow screens the same fields stack as cards.',
+    targetSelector: '.orbital-data-sheet',
+  },
+  {
+    title: 'Impact and intercept reports',
+    body: 'A surface strike opens the impact modal with optional fallout bands. A successful deflection opens the intercept report. Both are training aids — not real alerts.',
+    targetSelector: null,
+  },
+]
+
+function scrollOrbitalTutorialTargetIntoView(selector: string | null): void {
+  if (!selector) return
+  document.querySelector(selector)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+
+function closeOrbitalTutorialOverlay(): void {
+  orbitalTutorialCleanup?.()
+  orbitalTutorialCleanup = null
+}
+
+function mountOrbitalTutorial(root: HTMLElement): void {
+  if (document.getElementById('orbital-tutorial-root')) return
+
+  const host = document.createElement('div')
+  host.id = 'orbital-tutorial-root'
+  host.className = 'orbital-tutorial'
+  host.setAttribute('role', 'dialog')
+  host.setAttribute('aria-modal', 'true')
+  host.setAttribute('aria-labelledby', 'orbital-tutorial-title')
+
+  host.innerHTML = `
+    <div class="orbital-tutorial__backdrop" aria-hidden="true"></div>
+    <div class="orbital-tutorial__spotlight orbital-tutorial__spotlight--hidden" aria-hidden="true"></div>
+    <div class="orbital-tutorial__sheet">
+      <p class="orbital-tutorial__step" id="orbital-tutorial-step-label" aria-live="polite"></p>
+      <h2 class="orbital-tutorial__title" id="orbital-tutorial-title"></h2>
+      <p class="orbital-tutorial__body"></p>
+      <div class="orbital-tutorial__actions orbital-tutorial__actions--main">
+        <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__skip">Skip tour</button>
+        <div class="orbital-tutorial__nav">
+          <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__prev">Back</button>
+          <button type="button" class="orbital-btn orbital-btn--primary orbital-tutorial__next">Next</button>
+          <button type="button" class="orbital-btn orbital-btn--primary orbital-tutorial__enter" hidden>Enter mission</button>
+        </div>
+      </div>
+      <div class="orbital-tutorial__finish orbital-tutorial__finish--hidden">
+        <p class="orbital-tutorial__finish-lead">You have completed the guided tour.</p>
+        <p class="orbital-tutorial__finish-ask">How should we handle the tour on future visits?</p>
+        <div class="orbital-tutorial__actions orbital-tutorial__actions--finish">
+          <button type="button" class="orbital-btn orbital-btn--primary orbital-tutorial__again">Run the tour next time I open the console</button>
+          <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__noskip">Use the console without the tour</button>
+        </div>
+      </div>
+    </div>
+  `
+
+  root.appendChild(host)
+
+  const stepLabel = host.querySelector('#orbital-tutorial-step-label')!
+  const titleEl = host.querySelector('#orbital-tutorial-title')!
+  const bodyEl = host.querySelector('.orbital-tutorial__body')!
+  const mainActions = host.querySelector('.orbital-tutorial__actions--main')!
+  const finishBlock = host.querySelector('.orbital-tutorial__finish')!
+  const btnPrev = host.querySelector<HTMLButtonElement>('.orbital-tutorial__prev')!
+  const btnNext = host.querySelector<HTMLButtonElement>('.orbital-tutorial__next')!
+  const btnEnter = host.querySelector<HTMLButtonElement>('.orbital-tutorial__enter')!
+  const btnSkip = host.querySelector<HTMLButtonElement>('.orbital-tutorial__skip')!
+  const btnAgain = host.querySelector<HTMLButtonElement>('.orbital-tutorial__again')!
+  const btnNoSkip = host.querySelector<HTMLButtonElement>('.orbital-tutorial__noskip')!
+  const backdropEl = host.querySelector<HTMLElement>('.orbital-tutorial__backdrop')!
+  const spotlightEl = host.querySelector<HTMLElement>('.orbital-tutorial__spotlight')!
+
+  let index = 0
+  const total = ORBITAL_TUTORIAL_STEPS.length
+
+  const updateSpotlightGeometry = (): void => {
+    const step = ORBITAL_TUTORIAL_STEPS[index]
+    if (!step?.targetSelector) {
+      spotlightEl.classList.add('orbital-tutorial__spotlight--hidden')
+      backdropEl.classList.add('orbital-tutorial__backdrop--dim')
+      return
+    }
+    const el = document.querySelector(step.targetSelector)
+    if (!el) {
+      spotlightEl.classList.add('orbital-tutorial__spotlight--hidden')
+      backdropEl.classList.add('orbital-tutorial__backdrop--dim')
+      return
+    }
+    const r = el.getBoundingClientRect()
+    const pad = 10
+    const top = r.top - pad
+    const left = r.left - pad
+    const width = r.width + pad * 2
+    const height = r.height + pad * 2
+    spotlightEl.style.top = `${Math.max(0, top)}px`
+    spotlightEl.style.left = `${Math.max(0, left)}px`
+    spotlightEl.style.width = `${width}px`
+    spotlightEl.style.height = `${height}px`
+    spotlightEl.classList.remove('orbital-tutorial__spotlight--hidden')
+    backdropEl.classList.remove('orbital-tutorial__backdrop--dim')
+  }
+
+  const showFinish = (): void => {
+    mainActions.classList.add('orbital-tutorial__actions--hidden')
+    finishBlock.classList.remove('orbital-tutorial__finish--hidden')
+    spotlightEl.classList.add('orbital-tutorial__spotlight--hidden')
+    backdropEl.classList.add('orbital-tutorial__backdrop--dim')
+    stepLabel.textContent = ''
+    titleEl.textContent = 'Tour complete'
+    bodyEl.textContent = ''
+    btnAgain.focus()
+  }
+
+  const applyStep = (): void => {
+    const step = ORBITAL_TUTORIAL_STEPS[index]!
+    stepLabel.textContent = `Step ${index + 1} of ${total}`
+    titleEl.textContent = step.title
+    bodyEl.textContent = step.body
+
+    const needEnterMission = !!step.primaryEnterMission && phase === 'intro'
+    btnNext.hidden = needEnterMission
+    btnEnter.hidden = !needEnterMission
+    btnPrev.disabled = index === 0
+
+    scrollOrbitalTutorialTargetIntoView(step.targetSelector)
+    requestAnimationFrame(() => updateSpotlightGeometry())
+
+    if (needEnterMission) btnEnter.focus()
+    else btnNext.focus()
+  }
+
+  const goNext = (): void => {
+    if (index < total - 1) {
+      index += 1
+      applyStep()
+    } else {
+      showFinish()
+    }
+  }
+
+  const goPrev = (): void => {
+    if (index > 0) {
+      index -= 1
+      applyStep()
+    }
+  }
+
+  const onEnterMission = (): void => {
+    if (phase === 'intro') goSpace()
+    goNext()
+  }
+
+  const onKeydown = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      showFinish()
+    }
+  }
+
+  btnNext.addEventListener('click', goNext)
+  btnEnter.addEventListener('click', onEnterMission)
+  btnPrev.addEventListener('click', goPrev)
+  btnSkip.addEventListener('click', showFinish)
+
+  btnAgain.addEventListener('click', () => {
+    persistTutorialCompletion(false, true)
+    closeOrbitalTutorialOverlay()
+  })
+
+  btnNoSkip.addEventListener('click', () => {
+    persistTutorialCompletion(true, false)
+    closeOrbitalTutorialOverlay()
+  })
+
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', updateSpotlightGeometry)
+
+  orbitalTutorialCleanup = (): void => {
+    window.removeEventListener('keydown', onKeydown)
+    window.removeEventListener('resize', updateSpotlightGeometry)
+    host.remove()
+  }
+
+  applyStep()
+}
+
 function restart(): void {
   if (phase !== 'space') return
   simulationPaused = false
@@ -1597,12 +1881,16 @@ function mountApplication(root: HTMLElement): void {
   root.innerHTML = `
     <div class="orbital-root">
       <div class="orbital-workspace orbital-workspace--intro" id="orbital-workspace">
+        <button type="button" class="orbital-intro-tour-btn" id="orbital-intro-tour-btn" aria-label="Start guided tour">
+          Tour
+        </button>
         <aside class="orbital-balloon orbital-balloon--hidden" aria-label="Intercept telemetry">
           <div class="orbital-balloon__tail" aria-hidden="true"></div>
           <div class="orbital-balloon__inner">
             <div class="orbital-balloon__header">
               <span class="orbital-balloon__badge">HACHAL · orbital mission console</span>
               <div class="orbital-balloon__header-actions">
+                <button type="button" class="orbital-btn orbital-btn--tour" id="orbital-tour-btn" title="Guided tour">Tour</button>
                 <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
                 <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">Sign out</button>
               </div>
@@ -1767,7 +2055,7 @@ function mountApplication(root: HTMLElement): void {
           </div>
         </aside>
         <div class="orbital-radar-panel">
-          <div class="orbital-radar-bezel">
+          <div class="orbital-radar-bezel" id="orbital-radar-bezel">
             <span class="orbital-radar-label" aria-hidden="true">RADAR</span>
             <canvas class="orbital-canvas" aria-label="Radar scope"></canvas>
           </div>
@@ -1809,6 +2097,12 @@ function mountApplication(root: HTMLElement): void {
   root.querySelector('#orbital-earth-defense')?.addEventListener('click', onMagneticWaveClick)
 
   root.querySelector('#orbital-restart')?.addEventListener('click', () => restart())
+
+  const openTour = (): void => {
+    mountOrbitalTutorial(root)
+  }
+  root.querySelector('#orbital-tour-btn')?.addEventListener('click', openTour)
+  root.querySelector('#orbital-intro-tour-btn')?.addEventListener('click', openTour)
 
   root.querySelector('#orbital-signout')?.addEventListener('click', () => {
     sessionStorage.removeItem(HACHAL_SESSION_KEY)
@@ -1869,6 +2163,10 @@ function mountApplication(root: HTMLElement): void {
   lastTs = 0
   cancelAnimationFrame(raf)
   raf = requestAnimationFrame(step)
+
+  requestAnimationFrame(() => {
+    if (shouldAutoStartOrbitalTutorial()) mountOrbitalTutorial(root)
+  })
 }
 
 function mount(root: HTMLElement): void {
