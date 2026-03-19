@@ -1,19 +1,15 @@
 /**
  * Earth intro → split radar UI. Six numbered asteroids, speed limiter + per-body speeds,
  * self-destruct-style variable velocity, surface impact modal, fallout zones, combinable modes.
+ * Each track gets a random provisional designation; designations are unique per browser and never reused.
  */
 
 const HACHAL_SESSION_KEY = 'hachal-system-session'
 const HACHAL_ACCESS_CODE = '102030'
 
-const ASTEROID_NAMES = [
-  '2026-EV1',
-  '2026-HX4',
-  '2026-MK2',
-  '2026-QB7',
-  '2026-TY9',
-  '2026-WZ3',
-] as const
+/** Issued NEO-style designations — persisted so the same string never appears twice for this profile. */
+const USED_DESIGNATIONS_KEY = 'hachal-neo-designations'
+const DESIGNATION_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
 
 const TRACK_LIGHT_STORAGE_KEY = 'hachal-track-lights'
 
@@ -29,86 +25,87 @@ interface TrackLightPreset {
   badgeStroke: string
 }
 
+/** Display lights: black / green / gray / red / blue only (blue for range tracks; Earth keeps its own gradient). */
 const TRACK_LIGHT_PRESETS: readonly TrackLightPreset[] = [
   {
     id: 0,
-    name: 'Teal',
-    fill: 'rgba(45, 212, 191, 0.92)',
-    stroke: 'rgba(13, 148, 136, 1)',
-    glow: 'rgba(45, 212, 191, 0.55)',
-    badgeBg: 'rgba(6, 54, 42, 0.94)',
-    badgeFg: '#99f6e4',
-    badgeStroke: 'rgba(45, 212, 191, 0.75)',
+    name: 'Green',
+    fill: 'rgba(34, 197, 94, 0.92)',
+    stroke: 'rgba(21, 128, 61, 1)',
+    glow: 'rgba(34, 197, 94, 0.42)',
+    badgeBg: 'rgba(6, 40, 22, 0.94)',
+    badgeFg: '#d1fae5',
+    badgeStroke: 'rgba(34, 197, 94, 0.72)',
   },
   {
     id: 1,
-    name: 'Amber',
-    fill: 'rgba(251, 191, 36, 0.92)',
-    stroke: 'rgba(217, 119, 6, 1)',
-    glow: 'rgba(251, 191, 36, 0.45)',
-    badgeBg: 'rgba(67, 42, 6, 0.94)',
-    badgeFg: '#fef3c7',
-    badgeStroke: 'rgba(251, 191, 36, 0.8)',
+    name: 'Forest',
+    fill: 'rgba(22, 101, 52, 0.95)',
+    stroke: 'rgba(20, 83, 45, 1)',
+    glow: 'rgba(34, 197, 94, 0.28)',
+    badgeBg: 'rgba(5, 24, 14, 0.94)',
+    badgeFg: '#bbf7d0',
+    badgeStroke: 'rgba(22, 101, 52, 0.82)',
   },
   {
     id: 2,
-    name: 'Magenta',
-    fill: 'rgba(232, 121, 249, 0.9)',
-    stroke: 'rgba(192, 38, 211, 1)',
-    glow: 'rgba(232, 121, 249, 0.5)',
-    badgeBg: 'rgba(59, 16, 64, 0.94)',
-    badgeFg: '#fae8ff',
-    badgeStroke: 'rgba(232, 121, 249, 0.8)',
+    name: 'Range blue',
+    fill: 'rgba(59, 130, 246, 0.9)',
+    stroke: 'rgba(29, 78, 216, 1)',
+    glow: 'rgba(59, 130, 246, 0.38)',
+    badgeBg: 'rgba(15, 30, 60, 0.94)',
+    badgeFg: '#dbeafe',
+    badgeStroke: 'rgba(37, 99, 235, 0.72)',
   },
   {
     id: 3,
-    name: 'Ice',
-    fill: 'rgba(224, 242, 254, 0.95)',
-    stroke: 'rgba(125, 211, 252, 1)',
-    glow: 'rgba(186, 230, 253, 0.5)',
-    badgeBg: 'rgba(15, 40, 58, 0.94)',
-    badgeFg: '#e0f2fe',
-    badgeStroke: 'rgba(125, 211, 252, 0.85)',
+    name: 'Deep blue',
+    fill: 'rgba(30, 64, 175, 0.92)',
+    stroke: 'rgba(23, 37, 84, 1)',
+    glow: 'rgba(59, 130, 246, 0.32)',
+    badgeBg: 'rgba(10, 20, 45, 0.94)',
+    badgeFg: '#e2e8f0',
+    badgeStroke: 'rgba(30, 64, 175, 0.78)',
   },
   {
     id: 4,
-    name: 'Coral',
-    fill: 'rgba(251, 113, 133, 0.9)',
-    stroke: 'rgba(225, 29, 72, 1)',
-    glow: 'rgba(251, 113, 133, 0.45)',
-    badgeBg: 'rgba(76, 18, 28, 0.94)',
-    badgeFg: '#ffe4e6',
-    badgeStroke: 'rgba(251, 113, 133, 0.85)',
+    name: 'Alert red',
+    fill: 'rgba(220, 38, 38, 0.9)',
+    stroke: 'rgba(153, 27, 27, 1)',
+    glow: 'rgba(220, 38, 38, 0.38)',
+    badgeBg: 'rgba(50, 10, 10, 0.94)',
+    badgeFg: '#fecaca',
+    badgeStroke: 'rgba(248, 113, 113, 0.68)',
   },
   {
     id: 5,
-    name: 'Lime',
-    fill: 'rgba(163, 230, 53, 0.9)',
-    stroke: 'rgba(101, 163, 13, 1)',
-    glow: 'rgba(190, 242, 100, 0.45)',
-    badgeBg: 'rgba(28, 48, 8, 0.94)',
-    badgeFg: '#ecfccb',
-    badgeStroke: 'rgba(163, 230, 53, 0.8)',
+    name: 'Crimson',
+    fill: 'rgba(127, 29, 29, 0.92)',
+    stroke: 'rgba(69, 10, 10, 1)',
+    glow: 'rgba(185, 28, 28, 0.32)',
+    badgeBg: 'rgba(30, 8, 8, 0.94)',
+    badgeFg: '#fca5a5',
+    badgeStroke: 'rgba(220, 38, 38, 0.78)',
   },
   {
     id: 6,
-    name: 'Violet',
-    fill: 'rgba(167, 139, 250, 0.9)',
-    stroke: 'rgba(109, 40, 217, 1)',
-    glow: 'rgba(167, 139, 250, 0.5)',
-    badgeBg: 'rgba(40, 24, 72, 0.94)',
-    badgeFg: '#ede9fe',
-    badgeStroke: 'rgba(167, 139, 250, 0.85)',
+    name: 'Steel',
+    fill: 'rgba(100, 116, 139, 0.92)',
+    stroke: 'rgba(51, 65, 85, 1)',
+    glow: 'rgba(148, 163, 184, 0.32)',
+    badgeBg: 'rgba(15, 23, 42, 0.94)',
+    badgeFg: '#e2e8f0',
+    badgeStroke: 'rgba(100, 116, 139, 0.72)',
   },
   {
     id: 7,
     name: 'Slate',
-    fill: 'rgba(148, 163, 184, 0.92)',
-    stroke: 'rgba(71, 85, 105, 1)',
-    glow: 'rgba(148, 163, 184, 0.35)',
+    fill: 'rgba(71, 85, 105, 0.94)',
+    stroke: 'rgba(30, 41, 59, 1)',
+    glow: 'rgba(100, 116, 139, 0.26)',
     badgeBg: 'rgba(15, 23, 42, 0.94)',
-    badgeFg: '#e2e8f0',
-    badgeStroke: 'rgba(148, 163, 184, 0.75)',
+    badgeFg: '#cbd5e1',
+    badgeStroke: 'rgba(71, 85, 105, 0.78)',
   },
 ] as const
 
@@ -160,6 +157,10 @@ interface Asteroid {
   fuse: number
   /** Display light preset id (radar + UI) */
   lightId: number
+  /** Meteorite vs asteroid by estimated size class */
+  bodyClass: 'MET' | 'AST'
+  /** Static offset modeling compositional / remnant magnetization (nT) */
+  magneticBiasNT: number
 }
 
 interface ThreatRow {
@@ -168,6 +169,9 @@ interface ThreatRow {
   collisionLabel: string
   magneticNT: number
   lightId: number
+  bodyClass: 'MET' | 'AST'
+  equivDiameterM: number
+  emVelSignature: string
 }
 
 interface FalloutZone {
@@ -186,6 +190,9 @@ interface ImpactSnapshot {
   lonStr: string
   zones: FalloutZone[]
   bearingDeg: number
+  bodyClass: 'MET' | 'AST'
+  equivDiameterM: number
+  emVelSignature: string
 }
 
 interface Star {
@@ -210,8 +217,14 @@ let asteroids: Asteroid[] = []
 let earthX = 0
 let earthY = 0
 const EARTH_R = 28
-const AST_R = 7
-const CORRIDOR_R = EARTH_R + AST_R + 14
+/** Radar dot radius range (px); mapped to estimated physical size in UI. */
+const AST_R_MIN = 4.15
+const AST_R_MAX = 11.6
+const METEORITE_R_THRESHOLD = 6.9
+const CORRIDOR_CLEARANCE_PX = 16
+/** Show collision alert when intercept is this soon (simulation seconds) but not yet surface contact. */
+const COLLISION_ALERT_TTI_MAX_S = 14
+const COLLISION_ALERT_TTI_MIN_S = 0.06
 const KM_SCALE = 0.052
 const B_SURFACE_NT = 47_000
 
@@ -240,8 +253,90 @@ let magical: MagicalModes = {
 /** Last surface impact for Earth overlay + modal copy */
 let lastImpactOverlay: ImpactSnapshot | null = null
 
+let lastCollisionAlertHtml = ''
+
 function rand(a: number, b: number): number {
   return a + Math.random() * (b - a)
+}
+
+let designationsCache: Set<string> | null = null
+let designationsStorageBroken = false
+
+function loadDesignationSet(): Set<string> {
+  if (designationsCache) return designationsCache
+  try {
+    const raw = localStorage.getItem(USED_DESIGNATIONS_KEY)
+    if (raw) {
+      const arr = JSON.parse(raw) as unknown
+      if (Array.isArray(arr)) {
+        designationsCache = new Set(arr.filter((x): x is string => typeof x === 'string'))
+        return designationsCache
+      }
+    }
+    designationsCache = new Set()
+    return designationsCache
+  } catch {
+    designationsCache = new Set()
+    designationsStorageBroken = true
+    return designationsCache
+  }
+}
+
+/** Drop cache so the next load re-reads storage (e.g. after another tab wrote). */
+function invalidateDesignationCache(): void {
+  designationsCache = null
+}
+
+function persistDesignationSet(used: Set<string>): void {
+  if (designationsStorageBroken) return
+  try {
+    localStorage.setItem(USED_DESIGNATIONS_KEY, JSON.stringify([...used]))
+  } catch {
+    try {
+      const trimmed = [...used].slice(-2500)
+      localStorage.setItem(USED_DESIGNATIONS_KEY, JSON.stringify(trimmed))
+      designationsCache = new Set(trimmed)
+    } catch {
+      designationsStorageBroken = true
+    }
+  }
+}
+
+function randomProvisionalDesignation(): string {
+  const y = new Date().getUTCFullYear()
+  const a = DESIGNATION_LETTERS[Math.floor(Math.random() * DESIGNATION_LETTERS.length)]!
+  const b = DESIGNATION_LETTERS[Math.floor(Math.random() * DESIGNATION_LETTERS.length)]!
+  const n = 1 + Math.floor(Math.random() * 999)
+  return `${y}-${a}${b}${n}`
+}
+
+/**
+ * Reserve `count` fresh designations (random, never before issued in this browser when storage works).
+ */
+function reserveUniqueDesignations(count: number): string[] {
+  invalidateDesignationCache()
+  const used = loadDesignationSet()
+  const out: string[] = []
+  for (let k = 0; k < count; k++) {
+    let placed = false
+    for (let attempt = 0; attempt < 120; attempt++) {
+      const d = randomProvisionalDesignation()
+      if (!used.has(d)) {
+        used.add(d)
+        out.push(d)
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      let d = `${new Date().getUTCFullYear()}-ID${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 999)}`
+      while (used.has(d)) d = `${d}X`
+      used.add(d)
+      out.push(d)
+    }
+  }
+  persistDesignationSet(used)
+  return out
 }
 
 function wrap(v: number, min: number, max: number): number {
@@ -249,6 +344,13 @@ function wrap(v: number, min: number, max: number): number {
   while (v < min) v += w
   while (v >= max) v -= w
   return v
+}
+
+function randomBodyGeometry(): { r: number; bodyClass: 'MET' | 'AST'; magneticBiasNT: number } {
+  const r = rand(AST_R_MIN, AST_R_MAX)
+  const bodyClass: 'MET' | 'AST' = r < METEORITE_R_THRESHOLD ? 'MET' : 'AST'
+  const magneticBiasNT = rand(-3200, 3200)
+  return { r, bodyClass, magneticBiasNT }
 }
 
 function initStars(w: number, h: number): void {
@@ -269,6 +371,7 @@ function spawnAsteroids(w: number, h: number): void {
   const cx = w / 2
   const cy = h / 2
   const margin = 80
+  const names = reserveUniqueDesignations(6)
 
   for (let i = 0; i < 6; i++) {
     const edge = Math.floor(Math.random() * 4)
@@ -294,30 +397,90 @@ function spawnAsteroids(w: number, h: number): void {
     const dy = ty - y
     const len = Math.hypot(dx, dy) || 1
     const baseSpeed = rand(34, 102)
+    const { r, bodyClass, magneticBiasNT } = randomBodyGeometry()
     asteroids.push({
       num: i + 1,
-      name: ASTEROID_NAMES[i]!,
+      name: names[i]!,
       x,
       y,
       vx: (dx / len) * baseSpeed,
       vy: (dy / len) * baseSpeed,
-      r: AST_R,
+      r,
       baseSpeed,
       destructPhase: rand(0, Math.PI * 2),
       fuse: 0,
       lightId: loadPersistedLightId(i + 1),
+      bodyClass,
+      magneticBiasNT,
     })
   }
   lastImpactOverlay = null
 }
 
-function magneticAlongPath(ax: number, ay: number, ex: number, ey: number, t: number): number {
+function magneticAlongPath(
+  ax: number,
+  ay: number,
+  ex: number,
+  ey: number,
+  t: number,
+  biasNT = 0,
+): number {
   const dKm =
     (Math.hypot(ax - ex, ay - ey) / Math.max(logicalW, logicalH)) * 150_000_000
   const d = Math.max(dKm, 6_500)
   const dipole = B_SURFACE_NT * Math.pow(6_371 / d, 3)
   const coupling = 1 + 0.08 * Math.sin(t * 0.002 + ax * 0.01)
-  return dipole * coupling
+  return dipole * coupling + biasNT
+}
+
+function equivDiameterMFromRadarR(rPx: number): number {
+  return Math.round(95 + rPx * 118)
+}
+
+function formatEmVelSignature(BnT: number, vKmS: number): string {
+  const bDec = magical.precision ? 2 : 0
+  const vDec = magical.precision ? 4 : 2
+  return `M${BnT.toFixed(bDec)}·V${vKmS.toFixed(vDec)}`
+}
+
+function formatBodyClassLabel(c: 'MET' | 'AST'): string {
+  return c === 'MET' ? 'Meteorite' : 'Asteroid'
+}
+
+/** Corridor gate radius in display plane (Earth + body + margin). */
+function corridorGateRadiusPx(a: Asteroid): number {
+  return EARTH_R + a.r + CORRIDOR_CLEARANCE_PX
+}
+
+/**
+ * Smallest t > 0 such that |P + t v - E| = earthR + bodyR (2-D intercept), if any.
+ * Times are in the same units as velocity (px per second → seconds).
+ */
+function timeToEarthImpact(
+  px: number,
+  py: number,
+  vx: number,
+  vy: number,
+  ex: number,
+  ey: number,
+  earthR: number,
+  bodyR: number,
+): number | null {
+  const R = earthR + bodyR
+  const ox = px - ex
+  const oy = py - ey
+  const a = vx * vx + vy * vy
+  if (a < 1e-8) return null
+  const b = 2 * (ox * vx + oy * vy)
+  const c = ox * ox + oy * oy - R * R
+  const disc = b * b - 4 * a * c
+  if (disc < 0) return null
+  const s = Math.sqrt(disc)
+  const t1 = (-b - s) / (2 * a)
+  const t2 = (-b + s) / (2 * a)
+  const roots = [t1, t2].filter((t) => t > COLLISION_ALERT_TTI_MIN_S)
+  if (roots.length === 0) return null
+  return Math.min(...roots)
 }
 
 function formatSpeed(v: number): string {
@@ -338,7 +501,7 @@ function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): Thr
   const cx = a.x + t * vx
   const cy = a.y + t * vy
   const dist = Math.hypot(ex - cx, ey - cy)
-  if (dist > CORRIDOR_R) return null
+  if (dist > corridorGateRadiusPx(a)) return null
 
   const speedPx = Math.sqrt(vv)
   const speedKmS = speedPx * KM_SCALE
@@ -346,7 +509,9 @@ function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): Thr
   const ang = (Math.atan2(cy - ey, cx - ex) * (180 / Math.PI) + 360) % 360
   const rAu = (dist / (logicalW * 0.45)) * 0.25 + 0.0001
   const collisionLabel = `ψ = ${ang.toFixed(dec)}°   ρ = ${rAu.toFixed(dec + 2)} AU`
-  const magneticNT = magneticAlongPath(a.x, a.y, ex, ey, timeMs)
+  const magneticNT = magneticAlongPath(a.x, a.y, ex, ey, timeMs, a.magneticBiasNT)
+  const equivDiameterM = equivDiameterMFromRadarR(a.r)
+  const emVelSignature = formatEmVelSignature(magneticNT, speedKmS)
 
   return {
     label: `#${a.num} · ${a.name}`,
@@ -354,6 +519,9 @@ function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): Thr
     collisionLabel,
     magneticNT,
     lightId: a.lightId,
+    bodyClass: a.bodyClass,
+    equivDiameterM,
+    emVelSignature,
   }
 }
 
@@ -416,8 +584,10 @@ function openImpactModal(snapshot: ImpactSnapshot): void {
   if (!modal || !text || !list) return
 
   const prec = magical.precision ? 4 : 2
+  const cls = formatBodyClassLabel(snapshot.bodyClass)
   text.innerHTML = `
-    <strong>#${snapshot.num} ${escapeHtml(snapshot.name)}</strong> reached the surface at
+    <strong>#${snapshot.num} ${escapeHtml(snapshot.name)}</strong> (${cls}, estimated Ø <span class="orbital-mono">${snapshot.equivDiameterM}</span> m,
+    EM–V ID <span class="orbital-mono">${escapeHtml(snapshot.emVelSignature)}</span>) reached the surface at
     <span class="orbital-mono">${escapeHtml(snapshot.latStr)}</span>,
     <span class="orbital-mono">${escapeHtml(snapshot.lonStr)}</span>
     (strike bearing <span class="orbital-mono">${snapshot.bearingDeg.toFixed(prec)}°</span>,
@@ -446,7 +616,7 @@ function closeImpactModal(): void {
 
 function drawStars(): void {
   for (const s of stars) {
-    ctx.fillStyle = `rgba(230,240,255,${s.o})`
+    ctx.fillStyle = `rgba(226, 232, 240, ${s.o})`
     ctx.beginPath()
     ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2)
     ctx.fill()
@@ -456,9 +626,9 @@ function drawStars(): void {
 function drawFalloutOnEarth(cx: number, cy: number, r: number, snap: ImpactSnapshot): void {
   const op = magical.falloutMap ? 1.15 : 1
   const colors = [
-    `rgba(251, 146, 60, ${0.38 * op})`,
-    `rgba(239, 68, 68, ${0.3 * op})`,
-    `rgba(168, 85, 247, ${0.26 * op})`,
+    `rgba(220, 38, 38, ${0.34 * op})`,
+    `rgba(185, 28, 28, ${0.28 * op})`,
+    `rgba(100, 116, 139, ${0.26 * op})`,
   ]
   let i = 0
   for (const z of snap.zones) {
@@ -471,7 +641,7 @@ function drawFalloutOnEarth(cx: number, cy: number, r: number, snap: ImpactSnaps
     ctx.closePath()
     ctx.fill()
     if (magical.falloutMap) {
-      ctx.strokeStyle = 'rgba(254, 243, 199, 0.35)'
+      ctx.strokeStyle = 'rgba(203, 213, 225, 0.32)'
       ctx.lineWidth = 1
       ctx.stroke()
     }
@@ -584,7 +754,7 @@ function drawIntro(animT: number): void {
   ctx.font = `400 ${Math.max(14, w * 0.024)}px system-ui, Segoe UI, sans-serif`
   ctx.fillText('Galactic monitoring deploys after you continue', cx, cy + r + 78)
 
-  ctx.fillStyle = 'rgba(96, 165, 250, 0.9)'
+  ctx.fillStyle = 'rgba(59, 130, 246, 0.88)'
   ctx.font = `600 ${Math.max(13, w * 0.022)}px system-ui, Segoe UI, sans-serif`
   ctx.fillText('Click or tap anywhere to enter deep space', cx, h - 56)
 }
@@ -614,7 +784,7 @@ function drawRadarGrille(cx: number, cy: number, radius: number, animT: number):
   ctx.arc(cx, cy, radius, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.strokeStyle = 'rgba(52, 211, 153, 0.22)'
+  ctx.strokeStyle = 'rgba(34, 197, 94, 0.2)'
   ctx.lineWidth = 1
   for (let i = 1; i <= 4; i++) {
     ctx.beginPath()
@@ -631,9 +801,9 @@ function drawRadarGrille(cx: number, cy: number, radius: number, animT: number):
 
   const sweep = (animT * 0.0012) % (Math.PI * 2)
   const grd = ctx.createLinearGradient(cx, cy, cx + Math.cos(sweep) * radius, cy + Math.sin(sweep) * radius)
-  grd.addColorStop(0, 'rgba(52, 211, 153, 0.14)')
-  grd.addColorStop(0.35, 'rgba(52, 211, 153, 0.04)')
-  grd.addColorStop(1, 'rgba(52, 211, 153, 0)')
+  grd.addColorStop(0, 'rgba(34, 197, 94, 0.12)')
+  grd.addColorStop(0.35, 'rgba(34, 197, 94, 0.035)')
+  grd.addColorStop(1, 'rgba(34, 197, 94, 0)')
   ctx.fillStyle = grd
   ctx.beginPath()
   ctx.moveTo(cx, cy)
@@ -671,7 +841,8 @@ function drawSpace(animT: number): void {
   }
 
   updateTable(threats, animT)
-  updateFleetReadout()
+  updateFleetReadout(animT)
+  updateCollisionAlertBanner(animT)
 }
 
 function updateTable(threats: ThreatRow[], animT: number): void {
@@ -680,7 +851,7 @@ function updateTable(threats: ThreatRow[], animT: number): void {
   if (threats.length === 0) {
     tableBody.innerHTML = `
       <tr class="orbital-table__empty">
-        <td colspan="4">
+        <td colspan="6">
           <div class="orbital-table__empty-inner">
             <span class="orbital-table__empty-title">No corridor occupancy</span>
             <span class="orbital-table__empty-detail">No track passes the Earth-fixed resistance-corridor gate at this update cycle.</span>
@@ -696,9 +867,14 @@ function updateTable(threats: ThreatRow[], animT: number): void {
           <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Track display light" aria-hidden="true"></span>
           <span class="orbital-table__designator-text">${escapeHtml(t.label)}</span>
         </td>
+        <td class="orbital-table__cell orbital-table__cell--class">
+          <span class="orbital-table__class-main">${t.bodyClass === 'MET' ? 'Meteorite' : 'Asteroid'}</span>
+          <span class="orbital-table__class-sub orbital-mono">Ø<sub>est</sub> ${t.equivDiameterM} m</span>
+        </td>
         <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${formatSpeed(t.speedKmS)}</td>
         <td class="orbital-table__cell orbital-table__cell--geometry orbital-mono">${escapeHtml(t.collisionLabel)}</td>
         <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${magical.precision ? t.magneticNT.toFixed(2) : t.magneticNT.toFixed(1)}</td>
+        <td class="orbital-table__cell orbital-table__cell--sig orbital-mono">${escapeHtml(t.emVelSignature)}</td>
       </tr>`,
       )
       .join('')
@@ -719,11 +895,75 @@ function updateTable(threats: ThreatRow[], animT: number): void {
   }
 }
 
-function updateFleetReadout(): void {
+function updateCollisionAlertBanner(animT: number): void {
+  const el = document.getElementById('orbital-collision-alert')
+  if (!el) return
+
+  if (simulationPaused || phase !== 'space') {
+    el.classList.add('orbital-collision-alert--hidden')
+    el.setAttribute('hidden', '')
+    el.innerHTML = ''
+    lastCollisionAlertHtml = ''
+    return
+  }
+
+  let best: {
+    tti: number
+    a: Asteroid
+    speedKmS: number
+    magneticNT: number
+  } | null = null
+
+  const vScale = simTimeScale
+  for (const a of asteroids) {
+    const tti = timeToEarthImpact(
+      a.x,
+      a.y,
+      a.vx * vScale,
+      a.vy * vScale,
+      earthX,
+      earthY,
+      EARTH_R,
+      a.r,
+    )
+    if (tti === null || tti > COLLISION_ALERT_TTI_MAX_S) continue
+    const speedKmS = Math.hypot(a.vx, a.vy) * KM_SCALE
+    const magneticNT = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
+    if (!best || tti < best.tti) best = { tti, a, speedKmS, magneticNT }
+  }
+
+  if (!best) {
+    el.classList.add('orbital-collision-alert--hidden')
+    el.setAttribute('hidden', '')
+    el.innerHTML = ''
+    lastCollisionAlertHtml = ''
+    return
+  }
+
+  const sig = formatEmVelSignature(best.magneticNT, best.speedKmS)
+  const cls = formatBodyClassLabel(best.a.bodyClass)
+  const dM = equivDiameterMFromRadarR(best.a.r)
+  const ttiStr = best.tti.toFixed(magical.precision ? 2 : 1)
+  const bPrec = magical.precision ? 2 : 1
+  const html = `<span class="orbital-collision-alert__label">Earth collision alert</span> · Track <span class="orbital-mono">#${best.a.num}</span> <span class="orbital-mono">${escapeHtml(best.a.name)}</span> · ${cls} · Ø<sub>est</sub> <span class="orbital-mono">${dM}</span> m · TTI <span class="orbital-mono">≈${ttiStr}</span> s (wall, at current sim×) · <span class="orbital-mono">|v| ${formatSpeed(best.speedKmS)} km/s</span> · <span class="orbital-mono">|B| ${best.magneticNT.toFixed(bPrec)} nT</span> · EM–V ID <span class="orbital-mono">${escapeHtml(sig)}</span>`
+
+  if (html !== lastCollisionAlertHtml) {
+    el.innerHTML = html
+    lastCollisionAlertHtml = html
+  }
+  el.classList.remove('orbital-collision-alert--hidden')
+  el.removeAttribute('hidden')
+}
+
+function updateFleetReadout(animT: number): void {
   if (!fleetEl) return
   const lines = asteroids.map((a) => {
     const kms = Math.hypot(a.vx, a.vy) * KM_SCALE
     const fuseP = (a.fuse * 100).toFixed(magical.precision ? 1 : 0)
+    const Bnow = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
+    const sig = formatEmVelSignature(Bnow, kms)
+    const cls = a.bodyClass === 'MET' ? 'MET' : 'AST'
+    const diam = equivDiameterMFromRadarR(a.r)
     const swatches = TRACK_LIGHT_PRESETS.map((p) => {
       const active = a.lightId === p.id
       return `<button type="button" class="orbital-light-swatch${active ? ' is-active' : ''}" data-light-track="${a.num}" data-light-id="${p.id}" title="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)}" aria-pressed="${active ? 'true' : 'false'}" style="--swatch-fill:${p.fill};--swatch-stroke:${p.stroke}"></button>`
@@ -738,6 +978,7 @@ function updateFleetReadout(): void {
         <span class="orbital-mono">${formatSpeed(kms)} km/s</span>
         <span class="orbital-mono">fuse ${fuseP}%</span>
       </div>
+      <div class="orbital-fleet__telemetry orbital-mono" aria-label="Class, estimated diameter, EM–velocity signature">${cls} · Ø~${diam} m · ${escapeHtml(sig)}</div>
     </div>`
   })
   fleetEl.innerHTML = lines.join('')
@@ -780,7 +1021,7 @@ function applySelfDestructVelocity(a: Asteroid, dt: number): void {
   a.vy = (a.vy / mag) * spd
 }
 
-function checkSurfaceImpact(): void {
+function checkSurfaceImpact(animT: number): void {
   for (let i = 0; i < asteroids.length; i++) {
     const a = asteroids[i]!
     const d = Math.hypot(a.x - earthX, a.y - earthY)
@@ -790,6 +1031,7 @@ function checkSurfaceImpact(): void {
       const variability = magical.chaosVelocity ? 5.5 : 2.8
       const { lat, lon } = strikeToLatLon(bearing, variability)
       const zones = buildFalloutZones(bearing, speedKmS)
+      const magneticNT = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
       const snapshot: ImpactSnapshot = {
         num: a.num,
         name: a.name,
@@ -798,6 +1040,9 @@ function checkSurfaceImpact(): void {
         lonStr: lon,
         zones,
         bearingDeg: bearing,
+        bodyClass: a.bodyClass,
+        equivDiameterM: equivDiameterMFromRadarR(a.r),
+        emVelSignature: formatEmVelSignature(magneticNT, speedKmS),
       }
       asteroids.splice(i, 1)
       openImpactModal(snapshot)
@@ -822,7 +1067,7 @@ function step(ts: number): void {
       a.x = wrap(a.x, -40, w + 40)
       a.y = wrap(a.y, -40, h + 40)
     }
-    checkSurfaceImpact()
+    checkSurfaceImpact(ts)
   }
 
   ctx.clearRect(0, 0, logicalW, logicalH)
@@ -901,8 +1146,8 @@ function respawnOneSlot(num: number): void {
   const dy = ty - y
   const len = Math.hypot(dx, dy) || 1
   const baseSpeed = rand(34, 102)
-  const idx = num - 1
-  const name = ASTEROID_NAMES[idx] ?? `OBJ-${num}`
+  const name = reserveUniqueDesignations(1)[0] ?? `OBJ-${num}`
+  const { r, bodyClass, magneticBiasNT } = randomBodyGeometry()
   const neo: Asteroid = {
     num,
     name,
@@ -910,11 +1155,13 @@ function respawnOneSlot(num: number): void {
     y,
     vx: (dx / len) * baseSpeed,
     vy: (dy / len) * baseSpeed,
-    r: AST_R,
+    r,
     baseSpeed,
     destructPhase: rand(0, Math.PI * 2),
     fuse: 0,
     lightId: loadPersistedLightId(num),
+    bodyClass,
+    magneticBiasNT,
   }
   asteroids.push(neo)
   asteroids.sort((a, b) => a.num - b.num)
@@ -975,6 +1222,7 @@ function mountApplication(root: HTMLElement): void {
   phase = 'intro'
   simulationPaused = false
   lastImpactOverlay = null
+  lastCollisionAlertHtml = ''
   asteroids = []
   cancelAnimationFrame(raf)
 
@@ -1011,6 +1259,13 @@ function mountApplication(root: HTMLElement): void {
               <label class="orbital-mode"><input type="checkbox" id="mode-multizone" /> Multi-band fallout</label>
             </fieldset>
             <p class="orbital-phase" id="orbital-phase">Galactic field · 6 objects · Earth-centered</p>
+            <div
+              id="orbital-collision-alert"
+              class="orbital-collision-alert orbital-collision-alert--hidden"
+              role="alert"
+              aria-live="assertive"
+              hidden
+            ></div>
             <p class="orbital-fleet__legend">Track display light · radar blip, corridor line, table marker</p>
             <div class="orbital-fleet" id="orbital-fleet" aria-label="Fleet status and per-track lights"></div>
             <section class="orbital-data-sheet orbital-data-sheet--s3" aria-labelledby="orbital-sheet-title">
@@ -1041,15 +1296,19 @@ function mountApplication(root: HTMLElement): void {
                 >
                   <caption class="orbital-sr-only">
                     Near-Earth object tracks whose forward trajectories intersect the operational resistance corridor
-                    about Earth. Columns: object identifier, speed magnitude in kilometres per second, corridor
-                    line-of-sight geometry (ψ bearing and ρ range proxy), and magnetic-field magnitude along the
-                    Earth–object path in nanotesla. Values are simulation outputs for operator training.
+                    about Earth. Columns: object identifier, meteorite or asteroid class with estimated diameter, speed
+                    magnitude, corridor line-of-sight geometry, magnetic-field magnitude along the Earth–object path, and
+                    a composite EM–velocity signature. Values are simulation outputs for operator training.
                   </caption>
                   <thead>
                     <tr>
                       <th scope="col" class="orbital-th">
                         <abbr class="orbital-th__main" title="Object identifier">OBJ-ID</abbr>
                         <span class="orbital-th__sub">track · provisional designation</span>
+                      </th>
+                      <th scope="col" class="orbital-th">
+                        <abbr class="orbital-th__main" title="Meteorite vs asteroid and estimated diameter">Class</abbr>
+                        <span class="orbital-th__sub">body · Ø<sub>est</sub> (m)</span>
                       </th>
                       <th scope="col" class="orbital-th orbital-th--numeric">
                         <abbr class="orbital-th__main" title="Speed magnitude">|v|</abbr>
@@ -1061,18 +1320,22 @@ function mountApplication(root: HTMLElement): void {
                       </th>
                       <th scope="col" class="orbital-th orbital-th--numeric">
                         <abbr class="orbital-th__main" title="Magnetic field magnitude along path">|B|</abbr>
-                        <span class="orbital-th__sub">nT · dipole-scaled model</span>
+                        <span class="orbital-th__sub">nT · dipole + bias</span>
+                      </th>
+                      <th scope="col" class="orbital-th orbital-th--sig">
+                        <abbr class="orbital-th__main" title="Magnetic magnitude and speed composite key">EM–V ID</abbr>
+                        <span class="orbital-th__sub">|B| (nT) · |v| (km/s)</span>
                       </th>
                     </tr>
                   </thead>
                   <tbody id="orbital-tbody"></tbody>
                   <tfoot>
                     <tr class="orbital-table__foot">
-                      <td colspan="4" id="orbital-sheet-foot">
+                      <td colspan="6" id="orbital-sheet-foot">
                         <span class="orbital-table__foot-line"
-                          ><strong>Protocol</strong> · Simulated conjunction-style corridor filter. Not a miss-distance or
-                          TCA (time of closest approach) solution. For training / demonstration — not for operational
-                          hazard notification or public alert.</span
+                          ><strong>Protocol</strong> · Simulated conjunction-style corridor filter with predictive Earth
+                          intercept timing (display-plane geometry). Not a miss-distance or operational TCA solution. For
+                          training / demonstration — not for operational hazard notification or public alert.</span
                         >
                       </td>
                     </tr>
