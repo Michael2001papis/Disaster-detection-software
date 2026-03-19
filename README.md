@@ -8,7 +8,7 @@ Interactive **Earth → galactic monitor** built with [Vite](https://vite.dev/) 
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) (current LTS recommended)
+- [Node.js](https://nodejs.org/) **20.19+** or **22.12+** (required by Vite 8 — see `.nvmrc` for Vercel)
 
 ## Scripts
 
@@ -16,7 +16,8 @@ Interactive **Earth → galactic monitor** built with [Vite](https://vite.dev/) 
 | -------------- | ------------------------ |
 | `npm install`  | Install dependencies     |
 | `npm run dev`  | Start dev server         |
-| `npm run build`| Typecheck + production build (hosting / Vercel) |
+| `npm run build`| Production build (Vite; used on Vercel) |
+| `npm run typecheck` | TypeScript only (`tsc --noEmit`) |
 | `npm run build:usb` | Same + **relative** asset paths for USB / `file://` |
 | `npm run preview` | Preview production build |
 
