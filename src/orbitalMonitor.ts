@@ -1130,18 +1130,30 @@ function updateTable(threats: ThreatRow[], animT: number): void {
       .map(
         (t) => `
       <tr class="orbital-table__row${t.speedKmS >= 4.85 ? ' orbital-table__row--hot' : ''}">
-        <td class="orbital-table__cell orbital-table__cell--designator orbital-mono orbital-table__cell--with-light">
-          <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Track display light" aria-hidden="true"></span>
-          <span class="orbital-table__designator-text">${escapeHtml(t.label)}</span>
+        <td class="orbital-table__cell orbital-table__cell--designator orbital-mono" data-label="OBJ-ID">
+          <span class="orbital-table__stack-value orbital-table__cell--with-light">
+            <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Track display light" aria-hidden="true"></span>
+            <span class="orbital-table__designator-text">${escapeHtml(t.label)}</span>
+          </span>
         </td>
-        <td class="orbital-table__cell orbital-table__cell--class">
-          <span class="orbital-table__class-main">${t.bodyClass === 'MET' ? 'Meteorite' : 'Asteroid'}</span>
-          <span class="orbital-table__class-sub orbital-mono">Ø<sub>est</sub> ${t.equivDiameterM} m</span>
+        <td class="orbital-table__cell orbital-table__cell--class" data-label="Class / Ø">
+          <span class="orbital-table__stack-value">
+            <span class="orbital-table__class-main">${t.bodyClass === 'MET' ? 'Meteorite' : 'Asteroid'}</span>
+            <span class="orbital-table__class-sub orbital-mono">Ø<sub>est</sub> ${t.equivDiameterM} m</span>
+          </span>
         </td>
-        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${formatSpeed(t.speedKmS)}</td>
-        <td class="orbital-table__cell orbital-table__cell--geometry orbital-mono">${escapeHtml(t.collisionLabel)}</td>
-        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono">${magical.precision ? t.magneticNT.toFixed(2) : t.magneticNT.toFixed(1)}</td>
-        <td class="orbital-table__cell orbital-table__cell--sig orbital-mono">${escapeHtml(t.emVelSignature)}</td>
+        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono" data-label="|v| (km/s)">
+          <span class="orbital-table__stack-value">${formatSpeed(t.speedKmS)}</span>
+        </td>
+        <td class="orbital-table__cell orbital-table__cell--geometry orbital-mono" data-label="Corridor LOS">
+          <span class="orbital-table__stack-value">${escapeHtml(t.collisionLabel)}</span>
+        </td>
+        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono" data-label="|B| (nT)">
+          <span class="orbital-table__stack-value">${magical.precision ? t.magneticNT.toFixed(2) : t.magneticNT.toFixed(1)}</span>
+        </td>
+        <td class="orbital-table__cell orbital-table__cell--sig orbital-mono" data-label="EM–V ID">
+          <span class="orbital-table__stack-value">${escapeHtml(t.emVelSignature)}</span>
+        </td>
       </tr>`,
       )
       .join('')
