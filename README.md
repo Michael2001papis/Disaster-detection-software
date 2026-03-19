@@ -16,8 +16,15 @@ Interactive **Earth → galactic monitor** built with [Vite](https://vite.dev/) 
 | -------------- | ------------------------ |
 | `npm install`  | Install dependencies     |
 | `npm run dev`  | Start dev server         |
-| `npm run build`| Typecheck + production build |
+| `npm run build`| Typecheck + production build (hosting / Vercel) |
+| `npm run build:usb` | Same + **relative** asset paths for USB / `file://` |
 | `npm run preview` | Preview production build |
+
+## Vercel
+
+The build uses **`base: '/'`** when the `VERCEL` env var is set (automatic on Vercel) so JS/CSS load correctly from `*.vercel.app`. **`vercel.json`** sets `outputDirectory` to `dist`.
+
+In the Vercel project, set **Node.js** to **20.x** (or newer) if builds fail on an older runtime.
 
 ## Build for USB or offline copy (static site)
 
@@ -25,9 +32,13 @@ This project is a **static web app**. After a production build, only the output 
 
 ### Step 1 — Build
 
+For **USB / offline** (relative paths):
+
 ```bash
-npm run build
+npm run build:usb
 ```
+
+For **Vercel** or normal hosting from domain root, use `npm run build` (or let Vercel run it).
 
 Vite writes the site to **`dist/`** (Create React App would use `build/` instead).
 
@@ -43,7 +54,7 @@ Vite writes the site to **`dist/`** (Create React App would use `build/` instead
 - If scripts or styles fail to load (common with `file://` and browser security rules), **drag `index.html` into a browser window** or use a tiny local static server.
 - For demos and grading (**recommended**): deploy the same `dist` output to **[Vercel](https://vercel.com/)** (or similar). You get a stable URL, no `file://` quirks, and it behaves like a normal website.
 
-This repo’s Vite config uses **`base: './'`** so asset paths stay **relative**, which improves compatibility when opening the built files from disk or a USB path.
+**`npm run build:usb`** (or any build without `VERCEL=1`) emits **relative** asset paths for disk/USB. Vercel builds use **`/`** automatically.
 
 ## Demo query parameters
 
