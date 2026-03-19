@@ -195,6 +195,20 @@ interface ImpactSnapshot {
   emVelSignature: string
 }
 
+interface RescueReport {
+  utcIso: string
+  num: number
+  name: string
+  bodyClass: 'MET' | 'AST'
+  equivDiameterM: number
+  waveLevel: 1 | 2 | 3
+  ttiBeforeWallS: number
+  sigBefore: string
+  sigAfter: string
+  speedKmSAfter: number
+  magneticNTAfter: number
+}
+
 interface Star {
   x: number
   y: number
@@ -225,6 +239,13 @@ const CORRIDOR_CLEARANCE_PX = 16
 /** Show collision alert when intercept is this soon (simulation seconds) but not yet surface contact. */
 const COLLISION_ALERT_TTI_MAX_S = 14
 const COLLISION_ALERT_TTI_MIN_S = 0.06
+
+/** Yaw applied to velocity (rad) for magnetospheric pulse — L3 strongest. */
+const WAVE_DEFLECT_RAD: Record<1 | 2 | 3, number> = {
+  1: 0.12,
+  2: 0.24,
+  3: 0.42,
+}
 const KM_SCALE = 0.052
 const B_SURFACE_NT = 47_000
 
@@ -253,7 +274,13 @@ let magical: MagicalModes = {
 /** Last surface impact for Earth overlay + modal copy */
 let lastImpactOverlay: ImpactSnapshot | null = null
 
-let lastCollisionAlertHtml = ''
+let lastCollisionAlertText = ''
+/** Last animation time from draw loop (for wave actions between frames). */
+let lastFrameAnimT = 0
+/** Draw an Earth ring pulse until this animT (ms). */
+let magneticWavePulseUntil = 0
+let waveFeedbackText = ''
+let waveFeedbackClearAnimT = 0
 
 function rand(a: number, b: number): number {
   return a + Math.random() * (b - a)
@@ -483,6 +510,90 @@ function timeToEarthImpact(
   return Math.min(...roots)
 }
 
+function findPrimaryEarthCollisionThreat(animT: number): {
+  a: Asteroid
+  tti: number
+  speedKmS: number
+  magneticNT: number
+} | null {
+  const vScale = simTimeScale
+  let best: {
+    a: Asteroid
+    tti: number
+    speedKmS: number
+    magneticNT: number
+  } | null = null
+
+  for (const a of asteroids) {
+    const tti = timeToEarthImpact(
+      a.x,
+      a.y,
+      a.vx * vScale,
+      a.vy * vScale,
+      earthX,
+      earthY,
+      EARTH_R,
+      a.r,
+    )
+    if (tti === null || tti > COLLISION_ALERT_TTI_MAX_S) continue
+    const speedKmS = Math.hypot(a.vx, a.vy) * KM_SCALE
+    const magneticNT = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
+    if (!best || tti < best.tti) best = { a, tti, speedKmS, magneticNT }
+  }
+  return best
+}
+
+/** True if no Earth rim intercept within the collision-alert horizon (wall-clock sense at current sim×). */
+function trajectoryClearedImmediateThreat(a: Asteroid): boolean {
+  const vScale = simTimeScale
+  const tti = timeToEarthImpact(
+    a.x,
+    a.y,
+    a.vx * vScale,
+    a.vy * vScale,
+    earthX,
+    earthY,
+    EARTH_R,
+    a.r,
+  )
+  return tti === null || tti > COLLISION_ALERT_TTI_MAX_S
+}
+
+/**
+ * Magnetospheric pulse: rotate velocity in-plane to reduce Earth radial closing, preserving speed.
+ */
+function applyMagnetosphericWave(a: Asteroid, level: 1 | 2 | 3, ex: number, ey: number): void {
+  const du = ex - a.x
+  const dv = ey - a.y
+  const d = Math.hypot(du, dv) || 1
+  const uxd = du / d
+  const uyd = dv / d
+  const mag0 = Math.hypot(a.vx, a.vy) || 1
+  const rot = WAVE_DEFLECT_RAD[level]
+  let bestClosing = Infinity
+  let bestC = 1
+  let bestS = 0
+  for (const r of [rot, -rot]) {
+    const c = Math.cos(r)
+    const s = Math.sin(r)
+    const nvx = a.vx * c - a.vy * s
+    const nvy = a.vx * s + a.vy * c
+    const closing = nvx * uxd + nvy * uyd
+    if (closing < bestClosing) {
+      bestClosing = closing
+      bestC = c
+      bestS = s
+    }
+  }
+  const vx0 = a.vx
+  const vy0 = a.vy
+  a.vx = vx0 * bestC - vy0 * bestS
+  a.vy = vx0 * bestS + vy0 * bestC
+  const mag1 = Math.hypot(a.vx, a.vy) || 1
+  a.vx = (a.vx / mag1) * mag0
+  a.vy = (a.vy / mag1) * mag0
+}
+
 function formatSpeed(v: number): string {
   return magical.precision ? v.toFixed(4) : v.toFixed(2)
 }
@@ -614,6 +725,90 @@ function closeImpactModal(): void {
   document.getElementById('orbital-impact-modal')?.classList.add('orbital-modal--hidden')
 }
 
+function openRescueModal(r: RescueReport): void {
+  const modal = document.getElementById('orbital-rescue-modal')
+  const body = document.getElementById('orbital-rescue-report-body')
+  if (!modal || !body) return
+  const lvlLabel =
+    r.waveLevel === 3 ? 'Level 3 — maximum (best coupling)' : r.waveLevel === 2 ? 'Level 2 — medium' : 'Level 1 — low'
+  const cls = formatBodyClassLabel(r.bodyClass)
+  const bp = magical.precision ? 2 : 1
+  const utcDisp = r.utcIso.replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+  body.innerHTML = `
+    <dl class="orbital-rescue-dl">
+      <dt>Report time (UTC)</dt><dd class="orbital-mono">${escapeHtml(utcDisp)}</dd>
+      <dt>Track</dt><dd class="orbital-mono">#${r.num} ${escapeHtml(r.name)}</dd>
+      <dt>Class</dt><dd>${cls} · Ø<sub>est</sub> <span class="orbital-mono">${r.equivDiameterM}</span> m</dd>
+      <dt>Magnetospheric pulse</dt><dd>${escapeHtml(lvlLabel)}</dd>
+      <dt>TTI before pulse</dt><dd class="orbital-mono">≈${r.ttiBeforeWallS.toFixed(magical.precision ? 2 : 1)} s (wall, at sim×)</dd>
+      <dt>EM–V ID (before → after)</dt><dd class="orbital-mono">${escapeHtml(r.sigBefore)} → ${escapeHtml(r.sigAfter)}</dd>
+      <dt>|v| after pulse</dt><dd class="orbital-mono">${formatSpeed(r.speedKmSAfter)} km/s</dd>
+      <dt>|B| after pulse (path model)</dt><dd class="orbital-mono">${r.magneticNTAfter.toFixed(bp)} nT</dd>
+    </dl>
+    <p class="orbital-rescue-outcome"><strong>Outcome</strong> · Trajectory cleared from the Earth collision-alert horizon under the current 2-D projection. Simulated impact hazard mitigated. Continue nominal surveillance.</p>
+  `
+  modal.classList.remove('orbital-modal--hidden')
+  document.getElementById('orbital-rescue-dismiss')?.focus()
+}
+
+function closeRescueModal(): void {
+  document.getElementById('orbital-rescue-modal')?.classList.add('orbital-modal--hidden')
+}
+
+function deployMagneticWave(level: 1 | 2 | 3): void {
+  if (simulationPaused || phase !== 'space') return
+  const threat = findPrimaryEarthCollisionThreat(lastFrameAnimT)
+  if (!threat) return
+
+  const a = threat.a
+  const ttiBefore = threat.tti
+  const sigBefore = formatEmVelSignature(threat.magneticNT, threat.speedKmS)
+
+  applyMagnetosphericWave(a, level, earthX, earthY)
+
+  const speedAfter = Math.hypot(a.vx, a.vy) * KM_SCALE
+  const Bafter = magneticAlongPath(a.x, a.y, earthX, earthY, lastFrameAnimT, a.magneticBiasNT)
+  const sigAfter = formatEmVelSignature(Bafter, speedAfter)
+
+  magneticWavePulseUntil = lastFrameAnimT + 780
+  lastCollisionAlertText = ''
+
+  const fb = document.getElementById('orbital-wave-feedback')
+
+  if (trajectoryClearedImmediateThreat(a)) {
+    waveFeedbackText = ''
+    waveFeedbackClearAnimT = 0
+    if (fb) fb.textContent = ''
+    const report: RescueReport = {
+      utcIso: new Date().toISOString(),
+      num: a.num,
+      name: a.name,
+      bodyClass: a.bodyClass,
+      equivDiameterM: equivDiameterMFromRadarR(a.r),
+      waveLevel: level,
+      ttiBeforeWallS: ttiBefore,
+      sigBefore,
+      sigAfter,
+      speedKmSAfter: speedAfter,
+      magneticNTAfter: Bafter,
+    }
+    openRescueModal(report)
+    simulationPaused = true
+  } else {
+    waveFeedbackText = `Pulse L${level} applied — track still inside intercept window. Use a stronger pulse (L3 = best).`
+    waveFeedbackClearAnimT = lastFrameAnimT + 5000
+    if (fb) fb.textContent = waveFeedbackText
+  }
+}
+
+function onMagneticWaveClick(e: Event): void {
+  const btn = (e.target as HTMLElement).closest('[data-wave-level]')
+  if (!btn || !(btn instanceof HTMLButtonElement)) return
+  const lv = Number(btn.getAttribute('data-wave-level'))
+  if (lv !== 1 && lv !== 2 && lv !== 3) return
+  deployMagneticWave(lv as 1 | 2 | 3)
+}
+
 function drawStars(): void {
   for (const s of stars) {
     ctx.fillStyle = `rgba(226, 232, 240, ${s.o})`
@@ -666,6 +861,25 @@ function drawEarth(cx: number, cy: number, r: number, pulse: number): void {
   ctx.beginPath()
   ctx.arc(cx, cy, r + 4 + pulse * 6, 0, Math.PI * 2)
   ctx.stroke()
+}
+
+function drawMagneticWavePulse(cx: number, cy: number, earthR: number, animT: number): void {
+  if (animT >= magneticWavePulseUntil) return
+  const span = 780
+  const u = Math.max(0, 1 - (magneticWavePulseUntil - animT) / span)
+  const alpha = 0.5 * (1 - u) * (1 - u)
+  ctx.save()
+  ctx.strokeStyle = `rgba(34, 197, 94, ${alpha})`
+  ctx.lineWidth = 2.5
+  ctx.beginPath()
+  ctx.arc(cx, cy, earthR + 6 + u * 28, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.strokeStyle = `rgba(59, 130, 246, ${alpha * 0.55})`
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.arc(cx, cy, earthR + 4 + u * 20, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.restore()
 }
 
 function drawAsteroid(a: Asteroid, spacePhase: boolean): void {
@@ -813,6 +1027,7 @@ function drawRadarGrille(cx: number, cy: number, radius: number, animT: number):
 }
 
 function drawSpace(animT: number): void {
+  lastFrameAnimT = animT
   const w = logicalW
   const h = logicalH
   ctx.fillStyle = '#040a08'
@@ -829,6 +1044,7 @@ function drawSpace(animT: number): void {
   }
 
   drawEarth(earthX, earthY, EARTH_R, (Math.sin(animT * 0.002) + 1) * 0.5)
+  drawMagneticWavePulse(earthX, earthY, EARTH_R, animT)
 
   const threats: ThreatRow[] = []
   for (const a of asteroids) {
@@ -897,46 +1113,30 @@ function updateTable(threats: ThreatRow[], animT: number): void {
 
 function updateCollisionAlertBanner(animT: number): void {
   const el = document.getElementById('orbital-collision-alert')
-  if (!el) return
+  const textEl = document.getElementById('orbital-collision-alert-text')
+  if (!el || !textEl) return
+
+  const fb = document.getElementById('orbital-wave-feedback')
+  if (animT > waveFeedbackClearAnimT && waveFeedbackText) {
+    waveFeedbackText = ''
+    if (fb) fb.textContent = ''
+  }
 
   if (simulationPaused || phase !== 'space') {
     el.classList.add('orbital-collision-alert--hidden')
     el.setAttribute('hidden', '')
-    el.innerHTML = ''
-    lastCollisionAlertHtml = ''
+    textEl.innerHTML = ''
+    lastCollisionAlertText = ''
     return
   }
 
-  let best: {
-    tti: number
-    a: Asteroid
-    speedKmS: number
-    magneticNT: number
-  } | null = null
-
-  const vScale = simTimeScale
-  for (const a of asteroids) {
-    const tti = timeToEarthImpact(
-      a.x,
-      a.y,
-      a.vx * vScale,
-      a.vy * vScale,
-      earthX,
-      earthY,
-      EARTH_R,
-      a.r,
-    )
-    if (tti === null || tti > COLLISION_ALERT_TTI_MAX_S) continue
-    const speedKmS = Math.hypot(a.vx, a.vy) * KM_SCALE
-    const magneticNT = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
-    if (!best || tti < best.tti) best = { tti, a, speedKmS, magneticNT }
-  }
+  const best = findPrimaryEarthCollisionThreat(animT)
 
   if (!best) {
     el.classList.add('orbital-collision-alert--hidden')
     el.setAttribute('hidden', '')
-    el.innerHTML = ''
-    lastCollisionAlertHtml = ''
+    textEl.innerHTML = ''
+    lastCollisionAlertText = ''
     return
   }
 
@@ -947,9 +1147,9 @@ function updateCollisionAlertBanner(animT: number): void {
   const bPrec = magical.precision ? 2 : 1
   const html = `<span class="orbital-collision-alert__label">Earth collision alert</span> · Track <span class="orbital-mono">#${best.a.num}</span> <span class="orbital-mono">${escapeHtml(best.a.name)}</span> · ${cls} · Ø<sub>est</sub> <span class="orbital-mono">${dM}</span> m · TTI <span class="orbital-mono">≈${ttiStr}</span> s (wall, at current sim×) · <span class="orbital-mono">|v| ${formatSpeed(best.speedKmS)} km/s</span> · <span class="orbital-mono">|B| ${best.magneticNT.toFixed(bPrec)} nT</span> · EM–V ID <span class="orbital-mono">${escapeHtml(sig)}</span>`
 
-  if (html !== lastCollisionAlertHtml) {
-    el.innerHTML = html
-    lastCollisionAlertHtml = html
+  if (html !== lastCollisionAlertText) {
+    textEl.innerHTML = html
+    lastCollisionAlertText = html
   }
   el.classList.remove('orbital-collision-alert--hidden')
   el.removeAttribute('hidden')
@@ -1101,6 +1301,7 @@ function goSpace(): void {
   phase = 'space'
   simulationPaused = false
   closeImpactModal()
+  closeRescueModal()
   appMountEl?.classList.add('orbital-app--space')
   document.getElementById('orbital-workspace')?.classList.remove('orbital-workspace--intro')
   document.getElementById('orbital-workspace')?.classList.add('orbital-workspace--split')
@@ -1114,6 +1315,7 @@ function restart(): void {
   if (phase !== 'space') return
   simulationPaused = false
   closeImpactModal()
+  closeRescueModal()
   spawnAsteroids(logicalW, logicalH)
   lastTs = 0
 }
@@ -1222,7 +1424,10 @@ function mountApplication(root: HTMLElement): void {
   phase = 'intro'
   simulationPaused = false
   lastImpactOverlay = null
-  lastCollisionAlertHtml = ''
+  lastCollisionAlertText = ''
+  magneticWavePulseUntil = 0
+  waveFeedbackText = ''
+  waveFeedbackClearAnimT = 0
   asteroids = []
   cancelAnimationFrame(raf)
 
@@ -1233,7 +1438,7 @@ function mountApplication(root: HTMLElement): void {
           <div class="orbital-balloon__tail" aria-hidden="true"></div>
           <div class="orbital-balloon__inner">
             <div class="orbital-balloon__header">
-              <span class="orbital-balloon__badge">HACHAL · SSA console</span>
+              <span class="orbital-balloon__badge">HACHAL · orbital surveillance</span>
               <div class="orbital-balloon__header-actions">
                 <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
                 <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">Sign out</button>
@@ -1265,7 +1470,24 @@ function mountApplication(root: HTMLElement): void {
               role="alert"
               aria-live="assertive"
               hidden
-            ></div>
+            >
+              <div id="orbital-collision-alert-text" class="orbital-collision-alert__text"></div>
+              <p class="orbital-collision-alert__pulse-hint">
+                Magnetospheric pulse — limb-coupled wave on the illuminated sphere to perturb trajectory (simulation).
+              </p>
+              <div class="orbital-collision-alert__actions" role="group" aria-label="Magnetic wave intensity levels">
+                <button type="button" class="orbital-wave-btn" data-wave-level="1">
+                  Wave <span class="orbital-mono">L1</span><span class="orbital-wave-btn__sub">low</span>
+                </button>
+                <button type="button" class="orbital-wave-btn" data-wave-level="2">
+                  Wave <span class="orbital-mono">L2</span><span class="orbital-wave-btn__sub">medium</span>
+                </button>
+                <button type="button" class="orbital-wave-btn orbital-wave-btn--max" data-wave-level="3">
+                  Wave <span class="orbital-mono">L3</span><span class="orbital-wave-btn__sub">maximum — best deflection</span>
+                </button>
+              </div>
+              <p id="orbital-wave-feedback" class="orbital-wave-feedback" aria-live="polite"></p>
+            </div>
             <p class="orbital-fleet__legend">Track display light · radar blip, corridor line, table marker</p>
             <div class="orbital-fleet" id="orbital-fleet" aria-label="Fleet status and per-track lights"></div>
             <section class="orbital-data-sheet orbital-data-sheet--s3" aria-labelledby="orbital-sheet-title">
@@ -1334,8 +1556,9 @@ function mountApplication(root: HTMLElement): void {
                       <td colspan="6" id="orbital-sheet-foot">
                         <span class="orbital-table__foot-line"
                           ><strong>Protocol</strong> · Simulated conjunction-style corridor filter with predictive Earth
-                          intercept timing (display-plane geometry). Not a miss-distance or operational TCA solution. For
-                          training / demonstration — not for operational hazard notification or public alert.</span
+                          intercept timing (display-plane geometry). Magnetospheric pulse deflection and intercept reports
+                          are synthetic training aids. Not a miss-distance or operational TCA solution. For training /
+                          demonstration — not for operational hazard notification or public alert.</span
                         >
                       </td>
                     </tr>
@@ -1363,6 +1586,15 @@ function mountApplication(root: HTMLElement): void {
           </div>
         </div>
       </div>
+      <div id="orbital-rescue-modal" class="orbital-modal orbital-modal--hidden" role="dialog" aria-modal="true" aria-labelledby="orbital-rescue-title">
+        <div class="orbital-modal__panel orbital-modal__panel--rescue">
+          <h2 id="orbital-rescue-title" class="orbital-modal__title orbital-modal__title--rescue">Deflection intercept report</h2>
+          <div id="orbital-rescue-report-body" class="orbital-rescue-report-body"></div>
+          <div class="orbital-modal__actions">
+            <button type="button" class="orbital-btn orbital-btn--primary" id="orbital-rescue-dismiss">Acknowledge · resume surveillance</button>
+          </div>
+        </div>
+      </div>
     </div>
   `
 
@@ -1376,6 +1608,7 @@ function mountApplication(root: HTMLElement): void {
   phaseLine = root.querySelector('#orbital-phase')
 
   fleetEl?.addEventListener('click', onFleetLightPointer)
+  root.querySelector('#orbital-collision-alert')?.addEventListener('click', onMagneticWaveClick)
 
   root.querySelector('#orbital-restart')?.addEventListener('click', () => restart())
 
@@ -1413,6 +1646,11 @@ function mountApplication(root: HTMLElement): void {
   document.getElementById('orbital-impact-reset')?.addEventListener('click', () => {
     closeImpactModal()
     restart()
+  })
+
+  document.getElementById('orbital-rescue-dismiss')?.addEventListener('click', () => {
+    closeRescueModal()
+    simulationPaused = false
   })
 
   canvas.addEventListener('click', () => {
