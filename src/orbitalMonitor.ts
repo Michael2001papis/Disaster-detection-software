@@ -194,19 +194,19 @@ function drawEarth(cx: number, cy: number, r: number, pulse: number): void {
   ctx.stroke()
 }
 
-function drawAsteroid(a: Asteroid): void {
-  ctx.fillStyle = '#6b7280'
+function drawAsteroid(a: Asteroid, spacePhase: boolean): void {
+  ctx.fillStyle = spacePhase ? 'rgba(167, 243, 208, 0.95)' : '#6b7280'
   ctx.beginPath()
   ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2)
   ctx.fill()
-  ctx.strokeStyle = '#374151'
-  ctx.lineWidth = 1.5
+  ctx.strokeStyle = spacePhase ? 'rgba(16, 185, 129, 0.9)' : '#374151'
+  ctx.lineWidth = spacePhase ? 1.25 : 1.5
   ctx.stroke()
 }
 
 function drawIntro(animT: number): void {
-  const w = canvas.width
-  const h = canvas.height
+  const w = logicalW
+  const h = logicalH
   const g = ctx.createLinearGradient(0, 0, 0, h)
   g.addColorStop(0, '#070b14')
   g.addColorStop(0.5, '#0c1224')
@@ -237,7 +237,7 @@ function drawIntro(animT: number): void {
 }
 
 function drawCorridorLine(ax: number, ay: number, ex: number, ey: number): void {
-  ctx.strokeStyle = 'rgba(248, 113, 113, 0.55)'
+  ctx.strokeStyle = 'rgba(248, 113, 113, 0.65)'
   ctx.lineWidth = 2
   ctx.setLineDash([6, 6])
   ctx.beginPath()
@@ -247,15 +247,56 @@ function drawCorridorLine(ax: number, ay: number, ex: number, ey: number): void 
   ctx.setLineDash([])
 }
 
+function drawRadarGrille(cx: number, cy: number, radius: number, animT: number): void {
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius)
+  g.addColorStop(0, 'rgba(6, 12, 10, 0.15)')
+  g.addColorStop(0.85, 'rgba(6, 20, 14, 0.35)')
+  g.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
+  ctx.fillStyle = g
+  ctx.beginPath()
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.strokeStyle = 'rgba(52, 211, 153, 0.22)'
+  ctx.lineWidth = 1
+  for (let i = 1; i <= 4; i++) {
+    ctx.beginPath()
+    ctx.arc(cx, cy, (radius * i) / 4, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+
+  ctx.beginPath()
+  ctx.moveTo(cx - radius, cy)
+  ctx.lineTo(cx + radius, cy)
+  ctx.moveTo(cx, cy - radius)
+  ctx.lineTo(cx, cy + radius)
+  ctx.stroke()
+
+  const sweep = (animT * 0.0012) % (Math.PI * 2)
+  const grd = ctx.createLinearGradient(cx, cy, cx + Math.cos(sweep) * radius, cy + Math.sin(sweep) * radius)
+  grd.addColorStop(0, 'rgba(52, 211, 153, 0.14)')
+  grd.addColorStop(0.35, 'rgba(52, 211, 153, 0.04)')
+  grd.addColorStop(1, 'rgba(52, 211, 153, 0)')
+  ctx.fillStyle = grd
+  ctx.beginPath()
+  ctx.moveTo(cx, cy)
+  ctx.arc(cx, cy, radius, sweep - 0.45, sweep + 0.02)
+  ctx.closePath()
+  ctx.fill()
+}
+
 function drawSpace(animT: number): void {
-  const w = canvas.width
-  const h = canvas.height
-  ctx.fillStyle = '#060912'
+  const w = logicalW
+  const h = logicalH
+  ctx.fillStyle = '#040a08'
   ctx.fillRect(0, 0, w, h)
   drawStars()
 
   earthX = w / 2
   earthY = h / 2
+  const radarR = Math.min(w, h) / 2 - 6
+  drawRadarGrille(earthX, earthY, radarR, animT)
+
   drawEarth(earthX, earthY, EARTH_R, (Math.sin(animT * 0.002) + 1) * 0.5)
 
   const threats: ThreatRow[] = []
@@ -265,7 +306,7 @@ function drawSpace(animT: number): void {
       threats.push(row)
       drawCorridorLine(a.x, a.y, earthX, earthY)
     }
-    drawAsteroid(a)
+    drawAsteroid(a, true)
   }
 
   updateTable(threats, animT)
@@ -315,8 +356,8 @@ function step(ts: number): void {
   lastTs = ts
 
   if (phase === 'space') {
-    const w = canvas.width
-    const h = canvas.height
+    const w = logicalW
+    const h = logicalH
     for (const a of asteroids) {
       a.x += a.vx * dt
       a.y += a.vy * dt
@@ -325,7 +366,7 @@ function step(ts: number): void {
     }
   }
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.clearRect(0, 0, logicalW, logicalH)
   if (phase === 'intro') {
     drawIntro(ts)
   } else {
@@ -355,11 +396,12 @@ function resize(): void {
 function goSpace(): void {
   phase = 'space'
   appMountEl?.classList.add('orbital-app--space')
+  document.getElementById('orbital-workspace')?.classList.remove('orbital-workspace--intro')
+  document.getElementById('orbital-workspace')?.classList.add('orbital-workspace--split')
   resize()
   spawnAsteroids(logicalW, logicalH)
   if (phaseLine) phaseLine.textContent = 'Galactic field · 6 objects · Earth-centered'
-  const hud = document.querySelector('.orbital-hud')
-  hud?.classList.remove('orbital-hud--hidden')
+  document.querySelector('.orbital-balloon')?.classList.remove('orbital-balloon--hidden')
 }
 
 function restart(): void {
@@ -373,25 +415,36 @@ function mount(root: HTMLElement): void {
   root.classList.add('orbital-app')
   root.innerHTML = `
     <div class="orbital-root">
-      <canvas class="orbital-canvas" aria-label="Orbital simulation"></canvas>
-      <div class="orbital-hud orbital-hud--hidden">
-        <div class="orbital-hud__bar">
-          <p class="orbital-phase" id="orbital-phase">Galactic field · 6 objects · Earth-centered</p>
-          <button type="button" class="orbital-btn orbital-btn--ghost" id="orbital-restart">Restart</button>
-        </div>
-        <div class="orbital-table-wrap">
-          <table class="orbital-table" aria-live="polite">
-            <caption class="orbital-caption">Objects in resistance corridor with Earth</caption>
-            <thead>
-              <tr>
-                <th scope="col">Object</th>
-                <th scope="col">Speed (km/s)</th>
-                <th scope="col">Collision / corridor</th>
-                <th scope="col">B-field path (nT)</th>
-              </tr>
-            </thead>
-            <tbody id="orbital-tbody"></tbody>
-          </table>
+      <div class="orbital-workspace orbital-workspace--intro" id="orbital-workspace">
+        <aside class="orbital-balloon orbital-balloon--hidden" aria-label="Intercept telemetry">
+          <div class="orbital-balloon__tail" aria-hidden="true"></div>
+          <div class="orbital-balloon__inner">
+            <div class="orbital-balloon__header">
+              <span class="orbital-balloon__badge">TELEMETRY</span>
+              <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
+            </div>
+            <p class="orbital-phase" id="orbital-phase">Galactic field · 6 objects · Earth-centered</p>
+            <div class="orbital-table-wrap">
+              <table class="orbital-table" aria-live="polite">
+                <caption class="orbital-caption">Resistance corridor vs Earth</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Object</th>
+                    <th scope="col">v (km/s)</th>
+                    <th scope="col">Corridor</th>
+                    <th scope="col">B (nT)</th>
+                  </tr>
+                </thead>
+                <tbody id="orbital-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </aside>
+        <div class="orbital-radar-panel">
+          <div class="orbital-radar-bezel">
+            <span class="orbital-radar-label" aria-hidden="true">RADAR</span>
+            <canvas class="orbital-canvas" aria-label="Radar scope"></canvas>
+          </div>
         </div>
       </div>
     </div>
@@ -419,7 +472,7 @@ function mount(root: HTMLElement): void {
   })
 
   const ro = new ResizeObserver(() => resize())
-  ro.observe(canvas.parentElement ?? root)
+  ro.observe(root.querySelector('.orbital-radar-bezel') ?? root)
   resize()
 
   lastTs = 0
