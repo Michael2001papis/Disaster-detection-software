@@ -3,6 +3,9 @@
  * self-destruct-style variable velocity, surface impact modal, fallout zones, combinable modes.
  */
 
+const HACHAL_SESSION_KEY = 'hachal-system-session'
+const HACHAL_ACCESS_CODE = '102030'
+
 const ASTEROID_NAMES = [
   '2026-EV1',
   '2026-HX4',
@@ -736,9 +739,58 @@ function readModeCheckboxes(): void {
   magical.multiZone = !!(document.getElementById('mode-multizone') as HTMLInputElement)?.checked
 }
 
-function mount(root: HTMLElement): void {
-  appMountEl = root
-  root.classList.add('orbital-app')
+function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
+  root.innerHTML = `
+    <div class="hachal-gate">
+      <div class="hachal-gate__panel">
+        <p class="hachal-gate__eyebrow">Restricted · HACHAL</p>
+        <h1 class="hachal-gate__title">מערכת חי״ל</h1>
+        <p class="hachal-gate__title-en">HACHAL System</p>
+        <p class="hachal-gate__sub">הזן קוד גישה להפעלת המערכת / Enter access code to activate</p>
+        <form class="hachal-gate__form" id="hachal-login-form" autocomplete="off">
+          <label class="hachal-gate__label" for="hachal-password">קוד גישה · Access code</label>
+          <input
+            id="hachal-password"
+            name="hachal-password"
+            type="password"
+            class="hachal-gate__input"
+            inputmode="numeric"
+            maxlength="32"
+            required
+            aria-describedby="hachal-login-error"
+          />
+          <p id="hachal-login-error" class="hachal-gate__error" role="alert" aria-live="polite"></p>
+          <button type="submit" class="hachal-gate__submit">הפעל מערכת · Activate</button>
+        </form>
+      </div>
+    </div>
+  `
+
+  const form = root.querySelector<HTMLFormElement>('#hachal-login-form')
+  const input = root.querySelector<HTMLInputElement>('#hachal-password')
+  const errEl = root.querySelector<HTMLElement>('#hachal-login-error')
+  input?.focus()
+
+  form?.addEventListener('submit', (e) => {
+    e.preventDefault()
+    const val = input?.value.trim() ?? ''
+    if (val === HACHAL_ACCESS_CODE) {
+      if (errEl) errEl.textContent = ''
+      onUnlocked()
+      return
+    }
+    if (errEl) errEl.textContent = 'קוד שגוי · Invalid access code'
+    input?.select()
+  })
+}
+
+function mountApplication(root: HTMLElement): void {
+  phase = 'intro'
+  simulationPaused = false
+  lastImpactOverlay = null
+  asteroids = []
+  cancelAnimationFrame(raf)
+
   root.innerHTML = `
     <div class="orbital-root">
       <div class="orbital-workspace orbital-workspace--intro" id="orbital-workspace">
@@ -746,8 +798,11 @@ function mount(root: HTMLElement): void {
           <div class="orbital-balloon__tail" aria-hidden="true"></div>
           <div class="orbital-balloon__inner">
             <div class="orbital-balloon__header">
-              <span class="orbital-balloon__badge">TELEMETRY</span>
-              <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
+              <span class="orbital-balloon__badge">חי״ל · HACHAL</span>
+              <div class="orbital-balloon__header-actions">
+                <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
+                <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">יציאה</button>
+              </div>
             </div>
             <div class="orbital-controls">
               <label class="orbital-control">
@@ -848,6 +903,11 @@ function mount(root: HTMLElement): void {
 
   root.querySelector('#orbital-restart')?.addEventListener('click', () => restart())
 
+  root.querySelector('#orbital-signout')?.addEventListener('click', () => {
+    sessionStorage.removeItem(HACHAL_SESSION_KEY)
+    window.location.reload()
+  })
+
   const simEl = root.querySelector<HTMLInputElement>('#orbital-sim-scale')
   const simVal = root.querySelector('#orbital-sim-scale-val')
   simEl?.addEventListener('input', () => {
@@ -897,6 +957,21 @@ function mount(root: HTMLElement): void {
   lastTs = 0
   cancelAnimationFrame(raf)
   raf = requestAnimationFrame(step)
+}
+
+function mount(root: HTMLElement): void {
+  appMountEl = root
+  root.classList.add('orbital-app')
+
+  if (sessionStorage.getItem(HACHAL_SESSION_KEY) === '1') {
+    mountApplication(root)
+    return
+  }
+
+  showHachalGate(root, () => {
+    sessionStorage.setItem(HACHAL_SESSION_KEY, '1')
+    mountApplication(root)
+  })
 }
 
 export function startOrbitalMonitor(): void {

@@ -687,6 +687,123 @@ body {
 }
 
 /* ——— Orbital monitor: left telemetry balloon + right radar ——— */
+/* HACHAL access gate (before orbital UI) */
+.hachal-gate {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 20%, rgba(45, 212, 191, 0.08) 0%, transparent 55%),
+    linear-gradient(180deg, #030806 0%, #050c0a 45%, #020403 100%);
+}
+
+.hachal-gate__panel {
+  width: min(100%, 400px);
+  padding: 28px 24px 26px;
+  border-radius: 8px;
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  background: linear-gradient(165deg, rgba(10, 38, 30, 0.97) 0%, rgba(4, 18, 14, 0.99) 100%);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.hachal-gate__eyebrow {
+  margin: 0 0 10px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(94, 234, 212, 0.75);
+}
+
+.hachal-gate__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #ecfdf5;
+  line-height: 1.2;
+}
+
+.hachal-gate__title-en {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(167, 243, 208, 0.88);
+}
+
+.hachal-gate__sub {
+  margin: 16px 0 20px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(148, 163, 184, 0.92);
+}
+
+.hachal-gate__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hachal-gate__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(167, 243, 208, 0.85);
+}
+
+.hachal-gate__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  font-size: 16px;
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.12em;
+  border-radius: 6px;
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  background: rgba(0, 0, 0, 0.35);
+  color: #ecfdf5;
+}
+
+.hachal-gate__input:focus {
+  outline: 2px solid rgba(45, 212, 191, 0.5);
+  outline-offset: 2px;
+}
+
+.hachal-gate__error {
+  min-height: 1.25em;
+  margin: 0;
+  font-size: 12px;
+  color: #fca5a5;
+}
+
+.hachal-gate__submit {
+  margin-top: 8px;
+  padding: 12px 18px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #022c22;
+  background: linear-gradient(180deg, #2dd4bf 0%, #14b8a6 100%);
+}
+
+.hachal-gate__submit:hover {
+  filter: brightness(1.06);
+}
+
+.hachal-gate__submit:focus-visible {
+  outline: 2px solid #99f6e4;
+  outline-offset: 2px;
+}
+
 body:has(.orbital-app) {
   background: #030806;
   color: #d1fae5;
@@ -802,6 +919,14 @@ body:has(.orbital-app) {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.orbital-balloon__header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .orbital-balloon__badge {
@@ -893,6 +1018,18 @@ body:has(.orbital-app) {
 .orbital-btn--radar:focus-visible {
   outline: 2px solid #34d399;
   outline-offset: 2px;
+}
+
+.orbital-btn--signout {
+  background: transparent;
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+  padding-inline: 12px;
+  font-size: 11px;
+}
+
+.orbital-btn--signout:hover {
+  background: rgba(248, 113, 113, 0.12);
 }
 
 .orbital-sr-only {
