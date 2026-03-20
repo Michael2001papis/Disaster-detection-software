@@ -1,29 +1,59 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <!-- Charset & Compatibility -->
     <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+    <!-- Viewport (Mobile First) -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+
+    <!-- SEO בסיסי -->
+    <title>MP · Orbital Threat Detection System</title>
+    <meta
+      name="description"
+      content="Advanced mission-control interface for monitoring orbital threats, asteroid tracking, and real-time Earth defense simulation."
+    />
+    <meta name="keywords" content="space, asteroid, monitoring, orbital, defense, simulation, MP system" />
+    <meta name="author" content="Michael Papismedov (MP)" />
+
+    <!-- Theme / UI -->
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#040814" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#040814" />
+
+    <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Fonts (Optimized Loading) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
-    />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#040814" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#040814" />
-    <meta
-      name="description"
-      content="Mission-style orbital monitor training shell. Connects humanity to the advancement of space through NEO awareness and simulated Earth defense."
-    />
-    <title>Earth · Orbital threat console</title>
+
+    <!-- Performance Hint -->
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+
+    <!-- Open Graph (לשיתוף) -->
+    <meta property="og:title" content="MP Orbital Threat System" />
+    <meta property="og:description" content="Real-time orbital monitoring and Earth defense simulation system." />
+    <meta property="og:type" content="website" />
+
+    <!-- PWA בסיסי (אם תוסיף בעתיד) -->
+    <!-- <link rel="manifest" href="/manifest.webmanifest" /> -->
+
   </head>
+
   <body>
+    <!-- App Root -->
     <div id="app"></div>
+
+    <!-- Main Entry -->
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
