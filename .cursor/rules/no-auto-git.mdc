@@ -1,10 +1,39 @@
 ---
-description: No automatic git commit or push — user controls version control
+description: Manual Git control only — no automatic commits or pushes
 alwaysApply: true
 ---
 
-# Git: no automatic commits or pushes
+# Git Policy – Manual Version Control Only
 
-- **Do not** run `git commit`, `git add` for committing, or `git push` unless the user **explicitly** asks (e.g. "commit", "דחוף", "push to GitHub").
-- It is fine to run read-only git commands (`git status`, `git log`, `git diff`) when needed to investigate.
-- After code changes, leave the working tree as-is or summarize what changed; the user will commit manually when they want.
+## 🚫 Restrictions
+
+- **Do NOT** execute any of the following commands unless explicitly instructed by the user:
+  - `git add`
+  - `git commit`
+  - `git push`
+
+- These actions are **strictly user-controlled** and must only be performed when the user provides clear intent, such as:
+  - "commit"
+  - "push"
+  - "דחוף לגיטהאב"
+  - "בצע commit"
+
+## ✅ Allowed Actions
+
+- You MAY use read-only Git commands when necessary for inspection or debugging:
+  - `git status`
+  - `git log`
+  - `git diff`
+  - `git branch`
+
+## 🧠 Expected Behavior
+
+- After making any code changes:
+  - **Do not stage or commit anything automatically**
+  - Leave the working directory unchanged מבחינת Git
+  - Provide a **clear summary** of what was modified (files, logic, purpose)
+
+## 🎯 Guiding Principle
+
+> Version control is fully managed by the user.  
+> The system must never take autonomous actions that alter repository history.
