@@ -1,11 +1,85 @@
 ---
-description: No deleting TXT, MD, or other files without explicit user permission
+description: Strict file protection policy — no deletion of TXT, MD, or project files without explicit user approval
 alwaysApply: true
 ---
 
-# Deletion, TXT, and Markdown
+# File Protection Policy – No Unauthorized Deletions
 
-- **`.txt` files** (e.g. reports, notes, `STATUS_REPORT.txt`) are **not** disposable build artifacts. **Do not delete, move, or empty them** unless the user **explicitly** names the file and asks to remove or replace it.
-- **`.md` files** (especially **`README.md`**, docs, and project notes) are **not** irrelevant for deletion. **Do not delete or empty Markdown** unless the user **explicitly** asks to remove or replace that file. **Do** keep **`README.md` aligned with software status** when features change (update it alongside code; the detailed Hebrew log lives in `STATUS_REPORT.txt`).
-- **Any file or folder deletion** (including `delete_file`, `rm`, cleaning “unused” files, or reverting by deleting) requires **explicit user permission** first. If cleanup seems useful, list what would be removed and ask; do not delete preemptively.
-- Same for **destructive git** operations (see `no-auto-git.mdc` if present): no force-push, hard reset, or branch deletion without being asked.
+## 🚫 Strict Restrictions
+
+- **Do NOT delete, move, rename, or empty any file or folder** unless the user provides **explicit, file-specific permission**.
+
+- This applies to ALL deletion methods, including:
+  - File system operations (`rm`, `delete_file`, cleanup scripts)
+  - "Removing unused files"
+  - Reverting changes by deleting files
+  - Any automated cleanup logic
+
+---
+
+## 📄 Protected File Types
+
+### `.txt` Files (Reports & Logs)
+
+- Files such as:
+  - `STATUS_REPORT.txt`
+  - Notes, logs, reports
+
+- Are considered **critical project assets**, NOT temporary artifacts.
+
+- **STRICT RULE:**
+  - Do NOT delete, overwrite, move, or clear content
+  - Only modify/remove if the user explicitly names the file and requests it
+
+---
+
+### `.md` Files (Documentation)
+
+- Includes:
+  - `README.md`
+  - Documentation files
+  - Project notes
+
+- **STRICT RULE:**
+  - Do NOT delete or empty Markdown files under any circumstances without explicit instruction
+
+- ✅ **Allowed & Expected:**
+  - Keep `README.md` **accurate and up-to-date**
+  - Update it when features or structure change
+  - Maintain alignment between codebase and documentation
+
+- 📌 Note:
+  - Detailed logs and internal tracking remain in `STATUS_REPORT.txt`
+
+---
+
+## ⚠️ Destructive Operations Policy
+
+- The following actions are **strictly forbidden without explicit user approval**:
+  - Deleting files or folders
+  - Cleaning “unused” assets
+  - Resetting state by removing files
+  - Any destructive Git operations:
+    - `git push --force`
+    - `git reset --hard`
+    - Branch deletion
+
+- If cleanup or deletion **seems necessary**:
+  - ✅ Present a **clear list of candidates**
+  - ❗ Ask for approval
+  - 🚫 Do NOT execute anything preemptively
+
+---
+
+## 🧠 Expected Behavior
+
+- Always assume files are **intentional and important**
+- Prefer **preservation over cleanup**
+- When in doubt → **ASK, do NOT ACT**
+
+---
+
+## 🎯 Guiding Principle
+
+> No file is disposable unless the user explicitly decides so.  
+> The system must never take autonomous destructive actions.
