@@ -1,18 +1,30 @@
 {
-  "name": "disaster-detection-software",
+  "name": "mp-disaster-detection-system",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
+  "description": "Advanced disaster detection and analysis system (SPA) built with Vite + TypeScript",
+  "author": "Michael Papismedov (MP)",
+  "license": "UNLICENSED",
+
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=20.19.0"
   },
+
   "scripts": {
     "dev": "vite",
+    "start": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit",
     "build:usb": "vite build --base ./",
-    "preview": "vite preview"
+    "preview": "vite preview",
+
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck",
+
+    "clean": "rm -rf dist",
+    "rebuild": "npm run clean && npm run build"
   },
+
   "devDependencies": {
     "typescript": "~5.9.3",
     "vite": "^8.0.1"
