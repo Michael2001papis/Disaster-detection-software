@@ -70,7 +70,7 @@ package.json            — סקריפטים ו-engines
 5. פונקציונליות — פירוט
 --------------------------------------------------------------------------------
 5.1 שער HACHAL
-  - קוד גישה לדמו/אימון: 102030 (קבוע בקוד: src/orbitalMonitor.ts — HACHAL_ACCESS_CODE)
+  - קוד גישה לדמו/אימון: 321321 (קבוע בקוד: src/orbitalMonitor.ts — HACHAL_ACCESS_CODE)
   - הקוד אינו מוצג על המסך בשער — יש להזין אותו בשדה "Access code"
   - לאחר כניסה מוצלחת נשמר סשן ב-sessionStorage (מפתח hachal-system-session); בטאב הנוכחי
     לא תוצג שוב מסך הכניסה עד: סגירת הטאב, או לחיצה על Sign out (מנקה סשן ומרענן)
@@ -164,6 +164,68 @@ Vercel:
   א) לעדכן README.md כך שישקף: גלי מגנטוספרה, דוח הצלה, עיצוב מובייל.
   ב) בדיקות ידניות על Galaxy S22+ (גובה רדאר, גלילה בבלון, מודלים).
   ג) אופציונלי: workflow CI שמריץ typecheck לפני merge.
+
+
+11. עדכון סריקת קבצים, Git ומטא-נתונים — 21 במרץ 2026
+--------------------------------------------------------------------------------
+נתיב פרויקט: f:\WEB
+
+11.1 סריקת מבנה קבצים (ללא .git ו-node_modules)
+  - סה"כ קבצי פרויקט שנספרו: 28
+  - פילוח סיומות: .ts(6), .svg(6), .json(4), .css(2), .mdc(2), .html(2), .png(1),
+    .js(1 ב-dist), ועוד: .gitignore, .nvmrc, .md, .txt
+  - תיקיות שורש מרכזיות: src, public, dist, .cursor, node_modules (תלויות — לא נספרות למעלה)
+
+  רשימת נתיבים יחסיים (עיקריים, ללא node_modules/.git):
+    .cursor\rules\no-auto-git.mdc
+    .cursor\rules\no-delete-without-permission.mdc
+    .gitignore
+    .nvmrc
+    dist\assets\index-Bc9PEkZY.css
+    dist\assets\index-cJxnbH92.js
+    dist\favicon.svg
+    dist\icons.svg
+    dist\index.html
+    index.html
+    package.json
+    package-lock.json
+    public\favicon.svg
+    public\icons.svg
+    README.md
+    src\app.ts
+    src\assets\hero.png
+    src\assets\typescript.svg
+    src\assets\vite.svg
+    src\data\sampleObjects.ts
+    src\main.ts
+    src\orbitalMonitor.ts
+    src\style.css
+    src\types.ts
+    STATUS_REPORT.txt
+    tsconfig.json
+    vercel.json
+    vite.config.ts
+
+  הערה: שמות קבצי hash ב-dist משתנים אחרי כל build של Vite.
+
+11.2 Git — זהות גלובלית (מחשב מפתח)
+  - user.name:  Michael2001papis
+  - user.email: dvnka2@gmail.com
+  (הוגדר ב-git config --global; commits עתידיים ישתמשו בערכים אלה.)
+
+11.3 מצב ריפו (נקודת זמן הסריקה)
+  - ענף: main (מסונכרן עם origin/main לפי git status -sb)
+  - commit אחרון (oneline): 132f9f5 Merge branches 'main' and 'main' of
+    https://github.com/Michael2001papis/Disaster-detection-software
+
+11.4 package.json — ערכים נוכחיים (לעומת סעיף 1 בדוח מ-19/03)
+  - name:        mp-disaster-detection-system
+  - version:     0.1.0
+  - description: Advanced disaster detection and analysis system (SPA) built with Vite + TypeScript
+  - author:      Michael Papismedov (MP)
+  - engines.node: >=20.19.0
+  - סקריפטים: dev, start, build, build:usb, preview, typecheck, check, clean, rebuild
+  - הערה: שם החבילה בדוח הישן היה disaster-detection-software; המקור העדכני הוא package.json.
 
 
 ================================================================================

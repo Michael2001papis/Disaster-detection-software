@@ -5,7 +5,7 @@
  */
 
 const HACHAL_SESSION_KEY = 'hachal-system-session'
-const HACHAL_ACCESS_CODE = '102030'
+const HACHAL_ACCESS_CODE = '321321'
 
 /** Onboarding: step-by-step tour; `skip` disables auto-launch; `rerun-next` shows tour once on next visit. */
 const TUTORIAL_PREF_SKIP_KEY = 'hachal-tutorial-pref-skip'
