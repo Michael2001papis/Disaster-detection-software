@@ -1,5 +1,7 @@
 import { MissionSystemCore } from '../core/MissionSystemCore'
+import { mountOrbitalShell } from '../orbitalMonitor'
 
 export function bootstrapMissionSystem(): void {
-  new MissionSystemCore().run()
+  const core = new MissionSystemCore()
+  mountOrbitalShell(core)
 }

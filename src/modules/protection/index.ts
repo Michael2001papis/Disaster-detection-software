@@ -1,2 +1,1 @@
-/** ISPES — הגנת אזור בטוח: מוקד, מצבי חירום, תגובה לוגית. לוגיקה תועבר מ־orbitalMonitor בהמשך. */
-export {}
+export { protectionFromPrimaryThreat } from './safety'

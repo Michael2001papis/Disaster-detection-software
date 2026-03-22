@@ -1,2 +1,2 @@
-/** ISPES — מידע ותיעוד: יומן אירועים והחלטות. לוגיקה תועבר מ־orbitalMonitor בהמשך. */
-export {}
+export type { IntelEvent } from './events'
+export { MissionIntelligence } from './events'

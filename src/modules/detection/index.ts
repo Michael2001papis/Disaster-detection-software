@@ -1,2 +1,1 @@
-/** ISPES — איתור אובייקטים: יצירה, ייעוד, נתוני בסיס. לוגיקה תועבר מ־orbitalMonitor בהמשך. */
-export {}
+export { buildSixTrackAsteroids, randomBodyGeometry } from './spawn'

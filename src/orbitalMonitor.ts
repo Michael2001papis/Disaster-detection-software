@@ -17,8 +17,6 @@ import type {
   TrackLightPreset,
 } from './types/domain'
 import {
-  AST_R_MAX,
-  AST_R_MIN,
   B_SURFACE_NT,
   COLLISION_ALERT_TTI_MAX_S,
   COLLISION_ALERT_TTI_MIN_S,
@@ -26,9 +24,6 @@ import {
   EARTH_R,
   KM_SCALE,
   MAX_PHYS_SUBSTEP_S,
-  METEORITE_R_THRESHOLD,
-  SPEED_RELAX_LAMBDA,
-  SPEED_RELAX_LAMBDA_CHAOS,
   TABLE_FLEET_DOM_MIN_MS,
   WAVE_DEFLECT_RAD,
 } from './constants/simulation'
@@ -42,9 +37,14 @@ import {
   magneticAlongPath,
   trajectoryClearedImmediateThreat,
 } from './modules/threat'
-import { rand, wrap as wrapCoord } from './utils/random'
+import { rand } from './utils/random'
+import { MissionSystemCore } from './core/MissionSystemCore'
+import type { TrackingContext } from './core/pipelineTypes'
+import { randomBodyGeometry } from './modules/detection'
 
 type ActiveThreatSnapshot = PrimaryEarthCollisionThreat
+
+let missionCore: MissionSystemCore | null = null
 
 const HACHAL_SESSION_KEY = 'hachal-system-session'
 /** Fallback when `VITE_HACHAL_ACCESS_CODE` is not set at build time. */
@@ -418,13 +418,6 @@ function reserveUniqueDesignations(count: number): string[] {
   return out
 }
 
-function randomBodyGeometry(): { r: number; bodyClass: 'MET' | 'AST'; magneticBiasNT: number } {
-  const r = rand(AST_R_MIN, AST_R_MAX)
-  const bodyClass: 'MET' | 'AST' = r < METEORITE_R_THRESHOLD ? 'MET' : 'AST'
-  const magneticBiasNT = rand(-3200, 3200)
-  return { r, bodyClass, magneticBiasNT }
-}
-
 function initStars(w: number, h: number): void {
   stars = []
   const n = Math.min(220, Math.floor((w * h) / 9000))
@@ -439,54 +432,10 @@ function initStars(w: number, h: number): void {
 }
 
 function spawnAsteroids(w: number, h: number): void {
-  asteroids = []
-  const cx = w / 2
-  const cy = h / 2
-  const margin = 80
+  if (!missionCore) return
   const names = reserveUniqueDesignations(6)
-
-  for (let i = 0; i < 6; i++) {
-    const edge = Math.floor(Math.random() * 4)
-    let x = 0
-    let y = 0
-    if (edge === 0) {
-      x = rand(margin, w - margin)
-      y = margin
-    } else if (edge === 1) {
-      x = w - margin
-      y = rand(margin, h - margin)
-    } else if (edge === 2) {
-      x = rand(margin, w - margin)
-      y = h - margin
-    } else {
-      x = margin
-      y = rand(margin, h - margin)
-    }
-
-    const tx = cx + rand(-120, 120)
-    const ty = cy + rand(-120, 120)
-    const dx = tx - x
-    const dy = ty - y
-    const len = Math.hypot(dx, dy) || 1
-    const baseSpeed = rand(34, 102)
-    const { r, bodyClass, magneticBiasNT } = randomBodyGeometry()
-    asteroids.push({
-      num: i + 1,
-      name: names[i]!,
-      x,
-      y,
-      vx: (dx / len) * baseSpeed,
-      vy: (dy / len) * baseSpeed,
-      r,
-      baseSpeed,
-      speedRelax: baseSpeed,
-      destructPhase: rand(0, Math.PI * 2),
-      fuse: 0,
-      lightId: loadPersistedLightId(i + 1),
-      bodyClass,
-      magneticBiasNT,
-    })
-  }
+  asteroids = missionCore.spawnSixTracks(w, h, names, loadPersistedLightId)
+  missionCore.intelligence.reset()
   lastImpactOverlay = null
 }
 
@@ -1536,33 +1485,6 @@ function orbitalUxTip(idSuffix: string, buttonAria: string, bubble: string): str
   </span>`
 }
 
-function applySelfDestructVelocity(a: Asteroid, dt: number): void {
-  const chaos = magical.chaosVelocity ? 1.65 : 1
-  a.destructPhase += dt * (2.1 * chaos)
-  a.fuse = Math.min(1, a.fuse + dt * (0.014 + (magical.chaosVelocity ? 0.01 : 0)))
-  const surge =
-    1 +
-    0.32 * Math.sin(a.destructPhase) * (0.55 + a.fuse) +
-    0.4 * a.fuse * a.fuse * chaos
-  const targetSpd = Math.min(a.baseSpeed * surge, velocityCapPx)
-  let mag = Math.hypot(a.vx, a.vy)
-  if (mag < 1e-5) {
-    const du = earthX - a.x
-    const dv = earthY - a.y
-    const d = Math.hypot(du, dv) || 1
-    a.vx = (du / d) * a.baseSpeed
-    a.vy = (dv / d) * a.baseSpeed
-    mag = a.baseSpeed
-  }
-  const lam = magical.chaosVelocity ? SPEED_RELAX_LAMBDA_CHAOS : SPEED_RELAX_LAMBDA
-  const alpha = 1 - Math.exp(-lam * dt)
-  a.speedRelax += alpha * (targetSpd - a.speedRelax)
-  const newMag = Math.max(0.001, a.speedRelax)
-  const s = newMag / mag
-  a.vx *= s
-  a.vy *= s
-}
-
 function checkSurfaceImpact(animT: number): void {
   for (let i = 0; i < asteroids.length; i++) {
     const a = asteroids[i]!
@@ -1609,22 +1531,34 @@ function step(ts: number): void {
   lastTs = ts
   dt *= simTimeScale
 
-  if (phase === 'space' && !simulationPaused) {
-    const w = logicalW
-    const canvasH = logicalH
-    let simRemain = dt
-    while (simRemain > 1e-9 && !simulationPaused) {
-      const subDt = Math.min(MAX_PHYS_SUBSTEP_S, simRemain)
-      for (const a of asteroids) {
-        applySelfDestructVelocity(a, subDt)
-        a.x += a.vx * subDt
-        a.y += a.vy * subDt
-        a.x = wrapCoord(a.x, -40, w + 40)
-        a.y = wrapCoord(a.y, -40, canvasH + 40)
+  if (phase === 'space') {
+    if (!simulationPaused) {
+      let simRemain = dt
+      const trackCtx: TrackingContext = {
+        earthX,
+        earthY,
+        velocityCapPx,
+        chaosVelocity: magical.chaosVelocity,
+        logicalW,
+        logicalH,
       }
-      checkSurfaceImpact(ts)
-      simRemain -= subDt
+      while (simRemain > 1e-9 && !simulationPaused) {
+        const subDt = Math.min(MAX_PHYS_SUBSTEP_S, simRemain)
+        if (missionCore) {
+          missionCore.integrateSpaceSubstep(asteroids, subDt, trackCtx)
+        }
+        checkSurfaceImpact(ts)
+        simRemain -= subDt
+      }
     }
+    missionCore?.runTelemetryAfterMotion({
+      animT: ts,
+      asteroids,
+      earthX,
+      earthY,
+      simTimeScale,
+      earthThreatEnv: getEarthThreatEnv(),
+    })
   }
 
   ctx.clearRect(0, 0, logicalW, logicalH)
@@ -2593,8 +2527,15 @@ function mount(root: HTMLElement): void {
   })
 }
 
-export function startOrbitalMonitor(): void {
+/** מעביר ליבה מוכנה — נקודת הכניסה המועדפת מ־bootstrap. */
+export function mountOrbitalShell(core: MissionSystemCore): void {
+  missionCore = core
   const app = document.querySelector<HTMLElement>('#app')
   if (!app) return
   mount(app)
+}
+
+/** תאימות לאחור: יוצר ליבה חדשה מקומית. */
+export function startOrbitalMonitor(): void {
+  mountOrbitalShell(new MissionSystemCore())
 }

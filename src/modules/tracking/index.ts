@@ -1,2 +1,5 @@
-/** ISPES — מעקב ומיקום רציף. לוגיקה תועבר מ־orbitalMonitor בהמשך. */
-export {}
+export {
+  applySelfDestructVelocity,
+  integrateAsteroidMotion,
+  integrateAsteroidsSubstep,
+} from './motion'

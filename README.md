@@ -58,9 +58,15 @@ Copy contents of **`dist/`** only. Prefer hosting `dist` on HTTPS for consistent
 |------|------|
 | `index.html` | Entry, fonts, theme-color, meta description |
 | `src/main.ts` | Loads CSS, `bootstrapMissionSystem()` |
-| `src/app/bootstrap.ts` / `src/core/MissionSystemCore.ts` | App entry wiring (starts monitor) |
-| `src/orbitalMonitor.ts` | Gate, intro, canvas sim, UI, modals, waves, table |
-| `src/modules/threat/` | Threat / collision analysis (extracted logic) |
+| `src/app/bootstrap.ts` | Builds `MissionSystemCore`, calls `mountOrbitalShell(core)` |
+| `src/core/MissionSystemCore.ts` | Orchestrates detection spawn, tracking sub-steps, threat→protection→intelligence telemetry |
+| `src/core/pipelineTypes.ts` | Shared pipeline types (`TrackingContext`, telemetry snapshots) |
+| `src/orbitalMonitor.ts` | Gate, intro, canvas **view**, DOM, modals; receives core via `mountOrbitalShell` |
+| `src/modules/detection/` | Six-track spawn + body geometry |
+| `src/modules/tracking/` | Self-destruct velocity + position integration (sub-steps) |
+| `src/modules/protection/` | Safety snapshot from primary threat |
+| `src/modules/intelligence/` | In-memory event log (threat-window transitions) |
+| `src/modules/threat/` | Threat / collision analysis |
 | `src/style.css` | Global + orbital / HACHAL / responsive table |
 | `vite.config.ts` | `base` from `VERCEL` |
 
