@@ -4,6 +4,48 @@
  * Each track is numbered Track 1–6 on screen; an extra sim label (e.g. 2026-AB12) is unique per browser when storage works.
  */
 
+import type {
+  Asteroid,
+  FalloutZone,
+  ImpactSnapshot,
+  MagicalModes,
+  Phase,
+  PrimaryEarthCollisionThreat,
+  RescueReport,
+  Star,
+  ThreatRow,
+  TrackLightPreset,
+} from './types/domain'
+import {
+  AST_R_MAX,
+  AST_R_MIN,
+  B_SURFACE_NT,
+  COLLISION_ALERT_TTI_MAX_S,
+  COLLISION_ALERT_TTI_MIN_S,
+  CORRIDOR_CLEARANCE_PX,
+  EARTH_R,
+  KM_SCALE,
+  MAX_PHYS_SUBSTEP_S,
+  METEORITE_R_THRESHOLD,
+  SPEED_RELAX_LAMBDA,
+  SPEED_RELAX_LAMBDA_CHAOS,
+  TABLE_FLEET_DOM_MIN_MS,
+  WAVE_DEFLECT_RAD,
+} from './constants/simulation'
+import type { AnalyzeThreatEnv } from './modules/threat/analyzeThreat'
+import type { EarthThreatEnv } from './modules/threat/collisionThreat'
+import {
+  analyzeThreat,
+  equivDiameterMFromRadarR,
+  findPrimaryEarthCollisionThreat,
+  formatEmVelSignature,
+  magneticAlongPath,
+  trajectoryClearedImmediateThreat,
+} from './modules/threat'
+import { rand, wrap as wrapCoord } from './utils/random'
+
+type ActiveThreatSnapshot = PrimaryEarthCollisionThreat
+
 const HACHAL_SESSION_KEY = 'hachal-system-session'
 /** Fallback when `VITE_HACHAL_ACCESS_CODE` is not set at build time. */
 const HACHAL_ACCESS_CODE = '321321'
@@ -93,18 +135,6 @@ const USED_DESIGNATIONS_KEY = 'hachal-neo-designations'
 const DESIGNATION_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
 
 const TRACK_LIGHT_STORAGE_KEY = 'hachal-track-lights'
-
-/** Per-track display “light” (radar blip, label, corridor line, table marker). */
-interface TrackLightPreset {
-  id: number
-  name: string
-  fill: string
-  stroke: string
-  glow: string
-  badgeBg: string
-  badgeFg: string
-  badgeStroke: string
-}
 
 /** Display lights: black / green / gray / red / blue only (blue for range tracks; Earth keeps its own gradient). */
 const TRACK_LIGHT_PRESETS: readonly TrackLightPreset[] = [
@@ -220,96 +250,6 @@ function persistLightId(trackNum: number, lightId: number): void {
   }
 }
 
-type Phase = 'intro' | 'space'
-
-interface Asteroid {
-  num: number
-  name: string
-  x: number
-  y: number
-  vx: number
-  vy: number
-  r: number
-  /** Base cruise speed magnitude (px/s), unique per body */
-  baseSpeed: number
-  /**
-   * Low-pass of actual speed magnitude (px/s) toward the surge + cap target.
-   * Avoids frame-to-frame speed jumps and keeps cap / sim× changes feeling continuous.
-   */
-  speedRelax: number
-  /** Phase for oscillating “self-destruct” surge */
-  destructPhase: number
-  /** 0→1 fuse ramp (amplifies surge) */
-  fuse: number
-  /** Display light preset id (radar + UI) */
-  lightId: number
-  /** Meteorite vs asteroid by estimated size class */
-  bodyClass: 'MET' | 'AST'
-  /** Static offset modeling compositional / remnant magnetization (nT) */
-  magneticBiasNT: number
-}
-
-interface ThreatRow {
-  trackLine: string
-  simRefLine: string
-  speedKmS: number
-  collisionLabel: string
-  magneticNT: number
-  lightId: number
-  bodyClass: 'MET' | 'AST'
-  equivDiameterM: number
-  emVelSignature: string
-}
-
-interface FalloutZone {
-  label: string
-  innerKm: number
-  outerKm: number
-  bearingDeg: number
-  arcDeg: number
-}
-
-interface ImpactSnapshot {
-  num: number
-  name: string
-  speedKmS: number
-  latStr: string
-  lonStr: string
-  zones: FalloutZone[]
-  bearingDeg: number
-  bodyClass: 'MET' | 'AST'
-  equivDiameterM: number
-  emVelSignature: string
-}
-
-interface RescueReport {
-  utcIso: string
-  num: number
-  name: string
-  bodyClass: 'MET' | 'AST'
-  equivDiameterM: number
-  waveLevel: 1 | 2 | 3
-  ttiBeforeWallS: number
-  sigBefore: string
-  sigAfter: string
-  speedKmSAfter: number
-  magneticNTAfter: number
-}
-
-interface Star {
-  x: number
-  y: number
-  s: number
-  o: number
-}
-
-interface MagicalModes {
-  precision: boolean
-  falloutMap: boolean
-  chaosVelocity: boolean
-  multiZone: boolean
-}
-
 let phase: Phase = 'intro'
 /** True while intro → mission handoff animation runs (blocks double triggers). */
 let introHandoffActive = false
@@ -319,34 +259,6 @@ let stars: Star[] = []
 let asteroids: Asteroid[] = []
 let earthX = 0
 let earthY = 0
-const EARTH_R = 28
-/** Radar dot radius range (px); mapped to estimated physical size in UI. */
-const AST_R_MIN = 4.15
-const AST_R_MAX = 11.6
-const METEORITE_R_THRESHOLD = 6.9
-const CORRIDOR_CLEARANCE_PX = 16
-/** Show collision alert when intercept is this soon (simulation seconds) but not yet surface contact. */
-const COLLISION_ALERT_TTI_MAX_S = 14
-const COLLISION_ALERT_TTI_MIN_S = 0.06
-
-/** Yaw applied to velocity (rad) for magnetospheric pulse — L3 strongest. */
-const WAVE_DEFLECT_RAD: Record<1 | 2 | 3, number> = {
-  1: 0.12,
-  2: 0.24,
-  3: 0.42,
-}
-const KM_SCALE = 0.052
-const B_SURFACE_NT = 47_000
-
-/** Max simulation dt (seconds) per physics sub-step — keeps motion smooth and reduces rim tunneling at high sim×. */
-const MAX_PHYS_SUBSTEP_S = 1 / 80
-
-/** How fast actual speed catches the surge/cap target (1/s). Higher = snappier, lower = smoother. */
-const SPEED_RELAX_LAMBDA = 8.5
-const SPEED_RELAX_LAMBDA_CHAOS = 13
-
-/** Throttle full table+fleet innerHTML rebuilds (same clock as requestAnimationFrame). ~12 Hz avoids layout thrash and lost clicks on fleet swatches. */
-const TABLE_FLEET_DOM_MIN_MS = 83
 
 let lastTs = 0
 let raf = 0
@@ -375,6 +287,38 @@ let magical: MagicalModes = {
   multiZone: false,
 }
 
+function getEarthThreatEnv(): EarthThreatEnv {
+  return {
+    earthR: EARTH_R,
+    collisionAlertTtiMaxS: COLLISION_ALERT_TTI_MAX_S,
+    collisionAlertTtiMinS: COLLISION_ALERT_TTI_MIN_S,
+    kmScale: KM_SCALE,
+    logicalW,
+    logicalH,
+    bSurfaceNT: B_SURFACE_NT,
+  }
+}
+
+function getThreatTimingEnv(): Pick<EarthThreatEnv, 'earthR' | 'collisionAlertTtiMaxS' | 'collisionAlertTtiMinS'> {
+  return {
+    earthR: EARTH_R,
+    collisionAlertTtiMaxS: COLLISION_ALERT_TTI_MAX_S,
+    collisionAlertTtiMinS: COLLISION_ALERT_TTI_MIN_S,
+  }
+}
+
+function getAnalyzeThreatEnv(): AnalyzeThreatEnv {
+  return {
+    logicalW,
+    logicalH,
+    precision: magical.precision,
+    earthR: EARTH_R,
+    corridorClearancePx: CORRIDOR_CLEARANCE_PX,
+    kmScale: KM_SCALE,
+    bSurfaceNT: B_SURFACE_NT,
+  }
+}
+
 /** Last surface impact for Earth overlay + modal copy */
 let lastImpactOverlay: ImpactSnapshot | null = null
 
@@ -393,10 +337,6 @@ let magneticWaveShieldTrackNum: number | null = null
 let magneticWaveCelebrationUntilAnimT = 0
 /** When > 0, auto-clear `#orbital-wave-feedback` after this anim time (ms). */
 let waveFeedbackClearAnimT = 0
-
-function rand(a: number, b: number): number {
-  return a + Math.random() * (b - a)
-}
 
 let designationsCache: Set<string> | null = null
 let designationsStorageBroken = false
@@ -478,13 +418,6 @@ function reserveUniqueDesignations(count: number): string[] {
   return out
 }
 
-function wrap(v: number, min: number, max: number): number {
-  const w = max - min
-  while (v < min) v += w
-  while (v >= max) v -= w
-  return v
-}
-
 function randomBodyGeometry(): { r: number; bodyClass: 'MET' | 'AST'; magneticBiasNT: number } {
   const r = rand(AST_R_MIN, AST_R_MAX)
   const bodyClass: 'MET' | 'AST' = r < METEORITE_R_THRESHOLD ? 'MET' : 'AST'
@@ -557,120 +490,9 @@ function spawnAsteroids(w: number, h: number): void {
   lastImpactOverlay = null
 }
 
-function magneticAlongPath(
-  ax: number,
-  ay: number,
-  ex: number,
-  ey: number,
-  t: number,
-  biasNT = 0,
-): number {
-  const dKm =
-    (Math.hypot(ax - ex, ay - ey) / Math.max(logicalW, logicalH)) * 150_000_000
-  const d = Math.max(dKm, 6_500)
-  const dipole = B_SURFACE_NT * Math.pow(6_371 / d, 3)
-  const coupling = 1 + 0.08 * Math.sin(t * 0.002 + ax * 0.01)
-  return dipole * coupling + biasNT
-}
-
-function equivDiameterMFromRadarR(rPx: number): number {
-  return Math.round(95 + rPx * 118)
-}
-
-function formatEmVelSignature(BnT: number, vKmS: number): string {
-  const bDec = magical.precision ? 2 : 0
-  const vDec = magical.precision ? 4 : 2
-  return `M${BnT.toFixed(bDec)}·V${vKmS.toFixed(vDec)}`
-}
-
 /** User-facing size band — avoids “meteorite” confusion (atmospheric vs radar-small). */
 function formatBodyClassLabel(c: 'MET' | 'AST'): string {
   return c === 'MET' ? 'Smaller object' : 'Larger object'
-}
-
-/** Corridor gate radius in display plane (Earth + body + margin). */
-function corridorGateRadiusPx(a: Asteroid): number {
-  return EARTH_R + a.r + CORRIDOR_CLEARANCE_PX
-}
-
-/**
- * Smallest t > 0 such that |P + t v - E| = earthR + bodyR (2-D intercept), if any.
- * Times are in the same units as velocity (px per second → seconds).
- */
-function timeToEarthImpact(
-  px: number,
-  py: number,
-  vx: number,
-  vy: number,
-  ex: number,
-  ey: number,
-  earthR: number,
-  bodyR: number,
-): number | null {
-  const R = earthR + bodyR
-  const ox = px - ex
-  const oy = py - ey
-  const a = vx * vx + vy * vy
-  if (a < 1e-8) return null
-  const b = 2 * (ox * vx + oy * vy)
-  const c = ox * ox + oy * oy - R * R
-  const disc = b * b - 4 * a * c
-  if (disc < 0) return null
-  const s = Math.sqrt(disc)
-  const t1 = (-b - s) / (2 * a)
-  const t2 = (-b + s) / (2 * a)
-  const roots = [t1, t2].filter((t) => t > COLLISION_ALERT_TTI_MIN_S)
-  if (roots.length === 0) return null
-  return Math.min(...roots)
-}
-
-function findPrimaryEarthCollisionThreat(animT: number): {
-  a: Asteroid
-  tti: number
-  speedKmS: number
-  magneticNT: number
-} | null {
-  const vScale = simTimeScale
-  let best: {
-    a: Asteroid
-    tti: number
-    speedKmS: number
-    magneticNT: number
-  } | null = null
-
-  for (const a of asteroids) {
-    const tti = timeToEarthImpact(
-      a.x,
-      a.y,
-      a.vx * vScale,
-      a.vy * vScale,
-      earthX,
-      earthY,
-      EARTH_R,
-      a.r,
-    )
-    if (tti === null || tti > COLLISION_ALERT_TTI_MAX_S) continue
-    const speedKmS = Math.hypot(a.vx, a.vy) * KM_SCALE
-    const magneticNT = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
-    if (!best || tti < best.tti) best = { a, tti, speedKmS, magneticNT }
-  }
-  return best
-}
-
-/** True if no Earth rim intercept within the collision-alert horizon (wall-clock sense at current sim×). */
-function trajectoryClearedImmediateThreat(a: Asteroid): boolean {
-  const vScale = simTimeScale
-  const tti = timeToEarthImpact(
-    a.x,
-    a.y,
-    a.vx * vScale,
-    a.vy * vScale,
-    earthX,
-    earthY,
-    EARTH_R,
-    a.r,
-  )
-  return tti === null || tti > COLLISION_ALERT_TTI_MAX_S
 }
 
 /**
@@ -727,7 +549,7 @@ function tableStatusForSpeed(speedKmS: number): { label: string; tone: 'calm' | 
 function syncTableColumns(): void {
   const thead = document.getElementById('orbital-thead')
   const foot = document.getElementById('orbital-sheet-foot') as HTMLTableCellElement | null
-  const wrap = document.getElementById('orbital-table-wrap')
+  const tableWrap = document.getElementById('orbital-table-wrap')
   const sheet = document.getElementById('orbital-data-sheet')
   const cap = document.getElementById('orbital-table-caption')
   const tbl = document.querySelector('.orbital-table--assessment')
@@ -737,7 +559,7 @@ function syncTableColumns(): void {
   foot.colSpan = n
 
   sheet?.classList.toggle('orbital-data-sheet--precision', magical.precision)
-  wrap?.classList.toggle('orbital-table-wrap--detail', magical.precision)
+  tableWrap?.classList.toggle('orbital-table-wrap--detail', magical.precision)
   tbl?.classList.toggle('orbital-table--compact', !magical.precision)
 
   if (magical.precision) {
@@ -796,45 +618,6 @@ function syncTableColumns(): void {
       cap.textContent =
         'Tracks near Earth in this exercise: track, size, speed, and a simple status. Turn on Extra decimal places for full technical columns.'
     }
-  }
-}
-
-function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): ThreatRow | null {
-  const vx = a.vx
-  const vy = a.vy
-  const vv = vx * vx + vy * vy
-  if (vv < 1e-4) return null
-
-  const wx = ex - a.x
-  const wy = ey - a.y
-  const t = (wx * vx + wy * vy) / vv
-  if (t < 0) return null
-
-  const cx = a.x + t * vx
-  const cy = a.y + t * vy
-  const dist = Math.hypot(ex - cx, ey - cy)
-  if (dist > corridorGateRadiusPx(a)) return null
-
-  const speedPx = Math.sqrt(vv)
-  const speedKmS = speedPx * KM_SCALE
-  const dec = magical.precision ? 3 : 1
-  const ang = (Math.atan2(cy - ey, cx - ex) * (180 / Math.PI) + 360) % 360
-  const rAu = (dist / (logicalW * 0.45)) * 0.25 + 0.0001
-  const collisionLabel = `ψ = ${ang.toFixed(dec)}°   ρ = ${rAu.toFixed(dec + 2)} AU`
-  const magneticNT = magneticAlongPath(a.x, a.y, ex, ey, timeMs, a.magneticBiasNT)
-  const equivDiameterM = equivDiameterMFromRadarR(a.r)
-  const emVelSignature = formatEmVelSignature(magneticNT, speedKmS)
-
-  return {
-    trackLine: `Track ${a.num}`,
-    simRefLine: a.name,
-    speedKmS,
-    collisionLabel,
-    magneticNT,
-    lightId: a.lightId,
-    bodyClass: a.bodyClass,
-    equivDiameterM,
-    emVelSignature,
   }
 }
 
@@ -994,23 +777,31 @@ function clearMagneticWaveShield(): void {
 function updateMagneticWaveShieldState(_animT: number): void {
   if (magneticWaveShieldTrackNum === null) return
   const a = asteroids.find((x) => x.num === magneticWaveShieldTrackNum)
-  if (!a || trajectoryClearedImmediateThreat(a)) {
+  if (!a || trajectoryClearedImmediateThreat(a, earthX, earthY, simTimeScale, getThreatTimingEnv())) {
     magneticWaveShieldTrackNum = null
   }
 }
 
-type ActiveThreatSnapshot = NonNullable<ReturnType<typeof findPrimaryEarthCollisionThreat>>
-
 function executeMagneticWavePulse(level: 1 | 2 | 3, threat: ActiveThreatSnapshot): void {
   const a = threat.a
   const ttiBefore = threat.tti
-  const sigBefore = formatEmVelSignature(threat.magneticNT, threat.speedKmS)
+  const sigBefore = formatEmVelSignature(threat.magneticNT, threat.speedKmS, magical.precision)
 
   applyMagnetosphericWave(a, level, earthX, earthY)
 
   const speedAfter = Math.hypot(a.vx, a.vy) * KM_SCALE
-  const Bafter = magneticAlongPath(a.x, a.y, earthX, earthY, lastFrameAnimT, a.magneticBiasNT)
-  const sigAfter = formatEmVelSignature(Bafter, speedAfter)
+  const Bafter = magneticAlongPath(
+    a.x,
+    a.y,
+    earthX,
+    earthY,
+    lastFrameAnimT,
+    logicalW,
+    logicalH,
+    a.magneticBiasNT,
+    B_SURFACE_NT,
+  )
+  const sigAfter = formatEmVelSignature(Bafter, speedAfter, magical.precision)
 
   magneticWaveBurstStartAnimT = lastFrameAnimT
   lastCollisionAlertText = ''
@@ -1022,7 +813,7 @@ function executeMagneticWavePulse(level: 1 | 2 | 3, threat: ActiveThreatSnapshot
       'Try a <strong>stronger pulse (L3)</strong> while the buttons stay unlocked.'
     : 'Even <strong>L3</strong> was not enough for this geometry—the track is still inside the alert window. Keep watching; geometry may change.'
 
-  if (trajectoryClearedImmediateThreat(a)) {
+  if (trajectoryClearedImmediateThreat(a, earthX, earthY, simTimeScale, getThreatTimingEnv())) {
     magneticWaveBurstSpanMs = 2400
     magneticWavePulseUntil = lastFrameAnimT + magneticWaveBurstSpanMs
     magneticWaveCelebrationUntilAnimT = lastFrameAnimT + magneticWaveBurstSpanMs
@@ -1064,7 +855,14 @@ function executeMagneticWavePulse(level: 1 | 2 | 3, threat: ActiveThreatSnapshot
 
 function deployMagneticWave(level: 1 | 2 | 3): void {
   if (simulationPaused || phase !== 'space') return
-  const threat = findPrimaryEarthCollisionThreat(lastFrameAnimT)
+  const threat = findPrimaryEarthCollisionThreat(
+    lastFrameAnimT,
+    asteroids,
+    earthX,
+    earthY,
+    simTimeScale,
+    getEarthThreatEnv(),
+  )
   if (!threat) return
 
   const panel = document.getElementById('orbital-earth-defense')
@@ -1483,7 +1281,7 @@ function drawSpace(animT: number): void {
 
   const threats: ThreatRow[] = []
   for (const a of asteroids) {
-    const row = analyzeThreat(a, earthX, earthY, animT)
+    const row = analyzeThreat(a, earthX, earthY, animT, getAnalyzeThreatEnv())
     if (row) {
       threats.push(row)
       drawCorridorLine(a.x, a.y, earthX, earthY, a.lightId)
@@ -1613,7 +1411,14 @@ function updateCollisionAlertBanner(animT: number): void {
 
   el.classList.remove('orbital-earth-defense--dormant')
 
-  const best = findPrimaryEarthCollisionThreat(animT)
+  const best = findPrimaryEarthCollisionThreat(
+    animT,
+    asteroids,
+    earthX,
+    earthY,
+    simTimeScale,
+    getEarthThreatEnv(),
+  )
 
   if (!best) {
     clearSeverity()
@@ -1637,7 +1442,7 @@ function updateCollisionAlertBanner(animT: number): void {
 
   setWaveButtonsDisabled(false)
 
-  const sig = formatEmVelSignature(best.magneticNT, best.speedKmS)
+  const sig = formatEmVelSignature(best.magneticNT, best.speedKmS, magical.precision)
   const cls = formatBodyClassLabel(best.a.bodyClass)
   const dM = equivDiameterMFromRadarR(best.a.r)
   const ttiStr = best.tti.toFixed(magical.precision ? 2 : 1)
@@ -1657,8 +1462,18 @@ function updateFleetReadout(animT: number): void {
   const lines = asteroids.map((a) => {
     const kms = Math.hypot(a.vx, a.vy) * KM_SCALE
     const fuseP = (a.fuse * 100).toFixed(magical.precision ? 1 : 0)
-    const Bnow = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
-    const sig = formatEmVelSignature(Bnow, kms)
+    const Bnow = magneticAlongPath(
+      a.x,
+      a.y,
+      earthX,
+      earthY,
+      animT,
+      logicalW,
+      logicalH,
+      a.magneticBiasNT,
+      B_SURFACE_NT,
+    )
+    const sig = formatEmVelSignature(Bnow, kms, magical.precision)
     const sizeBand = a.bodyClass === 'MET' ? 'Smaller' : 'Larger'
     const diam = equivDiameterMFromRadarR(a.r)
     const swatches = TRACK_LIGHT_PRESETS.map((p) => {
@@ -1758,7 +1573,17 @@ function checkSurfaceImpact(animT: number): void {
       const variability = magical.chaosVelocity ? 5.5 : 2.8
       const { lat, lon } = strikeToLatLon(bearing, variability)
       const zones = buildFalloutZones(bearing, speedKmS)
-      const magneticNT = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
+      const magneticNT = magneticAlongPath(
+        a.x,
+        a.y,
+        earthX,
+        earthY,
+        animT,
+        logicalW,
+        logicalH,
+        a.magneticBiasNT,
+        B_SURFACE_NT,
+      )
       const snapshot: ImpactSnapshot = {
         num: a.num,
         name: a.name,
@@ -1769,7 +1594,7 @@ function checkSurfaceImpact(animT: number): void {
         bearingDeg: bearing,
         bodyClass: a.bodyClass,
         equivDiameterM: equivDiameterMFromRadarR(a.r),
-        emVelSignature: formatEmVelSignature(magneticNT, speedKmS),
+        emVelSignature: formatEmVelSignature(magneticNT, speedKmS, magical.precision),
       }
       asteroids.splice(i, 1)
       openImpactModal(snapshot)
@@ -1794,8 +1619,8 @@ function step(ts: number): void {
         applySelfDestructVelocity(a, subDt)
         a.x += a.vx * subDt
         a.y += a.vy * subDt
-        a.x = wrap(a.x, -40, w + 40)
-        a.y = wrap(a.y, -40, canvasH + 40)
+        a.x = wrapCoord(a.x, -40, w + 40)
+        a.y = wrapCoord(a.y, -40, canvasH + 40)
       }
       checkSurfaceImpact(ts)
       simRemain -= subDt

@@ -1,4 +1,4 @@
 import './style.css'
-import { startOrbitalMonitor } from './orbitalMonitor'
+import { bootstrapMissionSystem } from './app/bootstrap'
 
-startOrbitalMonitor()
+bootstrapMissionSystem()
