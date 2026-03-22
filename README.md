@@ -16,7 +16,7 @@ Static **SPA** (Vite + TypeScript): a **mission-control style** training shell f
    - **Status strip** — time / sim× / cap  
    - **Protect Earth — magnetospheric pulse** — always visible in mission mode; **L1 / L2 / L3** unlock when an Earth **collision-alert** window is active; synthetic deflection + **deflection intercept report** on success; sustained **magnetic shield** rings around Earth until the threat exits the alert window (plus celebration rings after a successful clear)  
    - **Fleet** — per-track display lights (persisted in `sessionStorage`)  
-   - **Objects near Earth** — default table: track, size, speed, simple status (**OK / Watch / Priority**); **Extra decimal places** adds direction, mag field, and signature. Desktop: no horizontal scroll in default view; narrow viewports use **card rows**  
+   - **Objects near Earth** — default table: track, size, speed, simple status (**OK / Watch / Priority**); **Extra decimal places** adds direction, mag field, and signature. Same table layout on phone and desktop; narrow screens may **scroll horizontally** inside the sheet.  
 4. **Surface impact** — modal + optional fallout list; **Restart / Continue** per buttons.
 
 **Persistence:** provisional designations (`localStorage`), track lights (`sessionStorage`), gate session + lockout/fail counters (`sessionStorage`).
@@ -57,8 +57,10 @@ Copy contents of **`dist/`** only. Prefer hosting `dist` on HTTPS for consistent
 | Path | Role |
 |------|------|
 | `index.html` | Entry, fonts, theme-color, meta description |
-| `src/main.ts` | Loads CSS, starts monitor |
+| `src/main.ts` | Loads CSS, `bootstrapMissionSystem()` |
+| `src/app/bootstrap.ts` / `src/core/MissionSystemCore.ts` | App entry wiring (starts monitor) |
 | `src/orbitalMonitor.ts` | Gate, intro, canvas sim, UI, modals, waves, table |
+| `src/modules/threat/` | Threat / collision analysis (extracted logic) |
 | `src/style.css` | Global + orbital / HACHAL / responsive table |
 | `vite.config.ts` | `base` from `VERCEL` |
 

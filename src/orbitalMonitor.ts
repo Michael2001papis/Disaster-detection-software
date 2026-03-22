@@ -2246,7 +2246,7 @@ function mountApplication(root: HTMLElement): void {
         </button>
         <aside class="orbital-balloon orbital-balloon--hidden" aria-label="Mission sidebar: training controls and live lists">
           <div class="orbital-balloon__tail" aria-hidden="true"></div>
-          <div class="orbital-balloon__inner">
+          <div class="orbital-balloon__inner orbital-mission-deck">
             <div class="orbital-balloon__header">
               <div class="orbital-balloon__header-left">
                 <span class="orbital-balloon__badge">HACHAL · orbital mission console</span>
@@ -2261,10 +2261,10 @@ function mountApplication(root: HTMLElement): void {
                 <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="End this session and return to the access gate">Log out</button>
               </div>
             </div>
-            <p class="orbital-sidebar-strap" id="orbital-sidebar-strap">
+            <p class="orbital-sidebar-strap orbital-subsystem orbital-subsystem--strap" id="orbital-sidebar-strap">
               This column is your <strong>control deck</strong>: story, pace, safety actions, colors, and the live list next to the radar.
             </p>
-            <section class="orbital-mandate" aria-labelledby="orbital-mandate-title">
+            <section class="orbital-mandate orbital-subsystem orbital-subsystem--intel" aria-labelledby="orbital-mandate-title">
               <div class="orbital-zone__head orbital-zone__head--tight">
                 <h3 class="orbital-mandate__title orbital-zone__title--in-mandate" id="orbital-mandate-title">Program vision</h3>
                 ${orbitalUxTip(
@@ -2290,7 +2290,7 @@ function mountApplication(root: HTMLElement): void {
                 defense network.
               </p>
             </section>
-            <div class="orbital-console-panel orbital-console-panel--sim">
+            <div class="orbital-console-panel orbital-console-panel--sim orbital-subsystem orbital-subsystem--sim">
               <div class="orbital-zone__head">
                 <h3 class="orbital-console-panel__heading" id="orbital-sim-controls-title">Training pace</h3>
                 ${orbitalUxTip(
@@ -2313,7 +2313,7 @@ function mountApplication(root: HTMLElement): void {
               </label>
               </div>
             </div>
-            <fieldset class="orbital-modes orbital-console-panel orbital-console-panel--modes" aria-describedby="orbital-modes-lead">
+            <fieldset class="orbital-modes orbital-console-panel orbital-console-panel--modes orbital-subsystem orbital-subsystem--modes" aria-describedby="orbital-modes-lead">
               <legend class="orbital-modes-legend-row">
                 <span>Optional screen overlays</span>
                 ${orbitalUxTip(
@@ -2328,7 +2328,7 @@ function mountApplication(root: HTMLElement): void {
               <label class="orbital-mode"><input type="checkbox" id="mode-chaos" title="Adds unpredictable speed spikes so tracks behave more erratically." /> Random speed surges</label>
               <label class="orbital-mode"><input type="checkbox" id="mode-multizone" title="After a strike, shows several impact bands instead of one simple zone." /> Layered impact zones</label>
             </fieldset>
-            <div class="orbital-status-strip" role="status" aria-live="polite">
+            <div class="orbital-status-strip orbital-subsystem orbital-subsystem--status" role="status" aria-live="polite">
               <span class="orbital-status-strip__dot" aria-hidden="true"></span>
               <div class="orbital-status-strip__body">
                 <div class="orbital-status-strip__head">
@@ -2344,7 +2344,7 @@ function mountApplication(root: HTMLElement): void {
             </div>
             <section
               id="orbital-earth-defense"
-              class="orbital-earth-defense orbital-collision-alert orbital-earth-defense--dormant"
+              class="orbital-earth-defense orbital-collision-alert orbital-earth-defense--dormant orbital-subsystem orbital-subsystem--protection"
               role="region"
               aria-labelledby="orbital-earth-defense-heading"
             >
@@ -2386,7 +2386,7 @@ function mountApplication(root: HTMLElement): void {
               </div>
               <div id="orbital-wave-feedback" class="orbital-wave-feedback" role="region" aria-label="Pulse feedback" aria-live="polite"></div>
             </section>
-            <section class="orbital-fleet-block" aria-labelledby="orbital-fleet-heading">
+            <section class="orbital-fleet-block orbital-subsystem orbital-subsystem--fleet" aria-labelledby="orbital-fleet-heading">
               <div class="orbital-zone__head orbital-zone__head--tight">
                 <h3 class="orbital-fleet-block__title" id="orbital-fleet-heading">Track colors</h3>
                 ${orbitalUxTip(
@@ -2399,7 +2399,7 @@ function mountApplication(root: HTMLElement): void {
               <p class="orbital-fleet__legend">Dot · line toward Earth · table square</p>
               <div class="orbital-fleet" id="orbital-fleet" aria-label="Per-track colors and quick stats"></div>
             </section>
-            <section class="orbital-data-sheet orbital-data-sheet--s3" id="orbital-data-sheet" aria-labelledby="orbital-sheet-title">
+            <section class="orbital-data-sheet orbital-data-sheet--s3 orbital-subsystem orbital-subsystem--objects" id="orbital-data-sheet" aria-labelledby="orbital-sheet-title">
               <div class="orbital-data-sheet__ribbon" aria-hidden="true"></div>
               <header class="orbital-data-sheet__head">
                 <div class="orbital-data-sheet__head-top">
