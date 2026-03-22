@@ -8,18 +8,18 @@ Static **SPA** (Vite + TypeScript): a **mission-control style** training shell f
 
 ## Flow
 
-1. **HACHAL gate** — access code entry; session remembered in `sessionStorage` until the tab closes, **Sign out**, or site data cleared. Demo code: constant `HACHAL_ACCESS_CODE` in `src/orbitalMonitor.ts`.
+1. **HACHAL gate** — access code entry; **Sign in** stores an authenticated flag in `sessionStorage` for this tab. Wrong codes are counted; after **5** failures the gate **locks for 2 minutes** (same tab). **Log out** returns to the gate and does **not** reset lockout or failure history (so lockout cannot be bypassed by logging out). Optional production code: set **`VITE_HACHAL_ACCESS_CODE`** at build time; otherwise a fallback constant in `src/orbitalMonitor.ts` is used (still visible in browser sources — client-only UX gate, not real cryptography).
 2. **Earth intro** — canvas; tap/click or **Enter / Space** to enter the field.
 3. **Mission field** — six numbered tracks (**Track 1–6**); table shows **smaller vs larger object** by radar size (training labels, not weather meteors), radar canvas, telemetry sidebar:
-   - **Simulation control** — sim rate ×, velocity cap  
+   - **Training pace** — sim speed ×, top speed (velocity cap)  
    - **Simulation modifiers** — precision, fallout overlay on Earth, chaos surge, multi-band fallout  
    - **Status strip** — time / sim× / cap  
    - **Protect Earth — magnetospheric pulse** — always visible in mission mode; **L1 / L2 / L3** unlock when an Earth **collision-alert** window is active; synthetic deflection + **deflection intercept report** on success; sustained **magnetic shield** rings around Earth until the threat exits the alert window (plus celebration rings after a successful clear)  
    - **Fleet** — per-track display lights (persisted in `sessionStorage`)  
-   - **NEO corridor occupancy** — live table (class, |v|, corridor LOS, |B|, EM–V); **card layout on narrow viewports** (no horizontal scroll) for phones (~Galaxy S22+ target)  
+   - **Objects near Earth** — default table: track, size, speed, simple status (**OK / Watch / Priority**); **Extra decimal places** adds direction, mag field, and signature. Desktop: no horizontal scroll in default view; narrow viewports use **card rows**  
 4. **Surface impact** — modal + optional fallout list; **Restart / Continue** per buttons.
 
-**Persistence:** provisional designations (`localStorage`), track lights (`sessionStorage`), gate session (`sessionStorage`).
+**Persistence:** provisional designations (`localStorage`), track lights (`sessionStorage`), gate session + lockout/fail counters (`sessionStorage`).
 
 ---
 

@@ -5,7 +5,83 @@
  */
 
 const HACHAL_SESSION_KEY = 'hachal-system-session'
+/** Fallback when `VITE_HACHAL_ACCESS_CODE` is not set at build time. */
 const HACHAL_ACCESS_CODE = '321321'
+const HACHAL_FAIL_COUNT_KEY = 'hachal-auth-fail-count'
+const HACHAL_LOCKOUT_UNTIL_KEY = 'hachal-auth-lockout-until'
+const HACHAL_MAX_ATTEMPTS = 5
+const HACHAL_LOCKOUT_MS = 120_000
+
+function getExpectedAccessCode(): string {
+  const fromEnv = import.meta.env.VITE_HACHAL_ACCESS_CODE
+  if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) {
+    return fromEnv.trim()
+  }
+  return HACHAL_ACCESS_CODE
+}
+
+function readHachalFailCount(): number {
+  try {
+    const v = sessionStorage.getItem(HACHAL_FAIL_COUNT_KEY)
+    const n = v ? Number.parseInt(v, 10) : 0
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch {
+    return 0
+  }
+}
+
+function writeHachalFailCount(n: number): void {
+  try {
+    if (n <= 0) sessionStorage.removeItem(HACHAL_FAIL_COUNT_KEY)
+    else sessionStorage.setItem(HACHAL_FAIL_COUNT_KEY, String(n))
+  } catch {
+    /* ignore */
+  }
+}
+
+function readHachalLockoutUntil(): number {
+  try {
+    const v = sessionStorage.getItem(HACHAL_LOCKOUT_UNTIL_KEY)
+    const n = v ? Number.parseInt(v, 10) : 0
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch {
+    return 0
+  }
+}
+
+function writeHachalLockoutUntil(ts: number): void {
+  try {
+    sessionStorage.setItem(HACHAL_LOCKOUT_UNTIL_KEY, String(ts))
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearHachalAuthPenalties(): void {
+  try {
+    sessionStorage.removeItem(HACHAL_FAIL_COUNT_KEY)
+    sessionStorage.removeItem(HACHAL_LOCKOUT_UNTIL_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatLockoutRemaining(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000))
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  if (m <= 0) return `${s} second(s)`
+  return `${m} min ${String(r).padStart(2, '0')} s`
+}
+
+let hachalGateTick: ReturnType<typeof setInterval> | null = null
+
+function stopHachalGateTick(): void {
+  if (hachalGateTick !== null) {
+    clearInterval(hachalGateTick)
+    hachalGateTick = null
+  }
+}
 
 /** Onboarding: step-by-step tour; `skip` disables auto-launch; `rerun-next` shows tour once on next visit. */
 const TUTORIAL_PREF_SKIP_KEY = 'hachal-tutorial-pref-skip'
@@ -156,6 +232,11 @@ interface Asteroid {
   r: number
   /** Base cruise speed magnitude (px/s), unique per body */
   baseSpeed: number
+  /**
+   * Low-pass of actual speed magnitude (px/s) toward the surge + cap target.
+   * Avoids frame-to-frame speed jumps and keeps cap / sim× changes feeling continuous.
+   */
+  speedRelax: number
   /** Phase for oscillating “self-destruct” surge */
   destructPhase: number
   /** 0→1 fuse ramp (amplifies surge) */
@@ -230,6 +311,8 @@ interface MagicalModes {
 }
 
 let phase: Phase = 'intro'
+/** True while intro → mission handoff animation runs (blocks double triggers). */
+let introHandoffActive = false
 let canvas: HTMLCanvasElement
 let ctx: CanvasRenderingContext2D
 let stars: Star[] = []
@@ -255,6 +338,16 @@ const WAVE_DEFLECT_RAD: Record<1 | 2 | 3, number> = {
 const KM_SCALE = 0.052
 const B_SURFACE_NT = 47_000
 
+/** Max simulation dt (seconds) per physics sub-step — keeps motion smooth and reduces rim tunneling at high sim×. */
+const MAX_PHYS_SUBSTEP_S = 1 / 80
+
+/** How fast actual speed catches the surge/cap target (1/s). Higher = snappier, lower = smoother. */
+const SPEED_RELAX_LAMBDA = 8.5
+const SPEED_RELAX_LAMBDA_CHAOS = 13
+
+/** Throttle full table+fleet innerHTML rebuilds (same clock as requestAnimationFrame). ~12 Hz avoids layout thrash and lost clicks on fleet swatches. */
+const TABLE_FLEET_DOM_MIN_MS = 83
+
 let lastTs = 0
 let raf = 0
 let tableBody: HTMLTableSectionElement | null = null
@@ -264,6 +357,11 @@ let appMountEl: HTMLElement | null = null
 let logicalW = 800
 let logicalH = 600
 let lastUtcUiMs = 0
+let lastTableFleetDomMs = 0
+
+function invalidateTelemetryDomSchedule(): void {
+  lastTableFleetDomMs = 0
+}
 
 /** Simulation time multiplier (speed limiter) */
 let simTimeScale = 1
@@ -293,7 +391,7 @@ let magneticWaveBurstSpanMs = 780
 let magneticWaveShieldTrackNum: number | null = null
 /** After a successful deflection, keep shield-style rings until this anim time (ms). */
 let magneticWaveCelebrationUntilAnimT = 0
-let waveFeedbackText = ''
+/** When > 0, auto-clear `#orbital-wave-feedback` after this anim time (ms). */
 let waveFeedbackClearAnimT = 0
 
 function rand(a: number, b: number): number {
@@ -448,6 +546,7 @@ function spawnAsteroids(w: number, h: number): void {
       vy: (dy / len) * baseSpeed,
       r,
       baseSpeed,
+      speedRelax: baseSpeed,
       destructPhase: rand(0, Math.PI * 2),
       fuse: 0,
       lightId: loadPersistedLightId(i + 1),
@@ -607,10 +706,97 @@ function applyMagnetosphericWave(a: Asteroid, level: 1 | 2 | 3, ex: number, ey: 
   const mag1 = Math.hypot(a.vx, a.vy) || 1
   a.vx = (a.vx / mag1) * mag0
   a.vy = (a.vy / mag1) * mag0
+  a.speedRelax = mag0
 }
 
 function formatSpeed(v: number): string {
   return magical.precision ? v.toFixed(4) : v.toFixed(2)
+}
+
+function tableColumnCount(): number {
+  return magical.precision ? 6 : 4
+}
+
+/** Simple status for table rows — emphasizes speed / attention (not physics). */
+function tableStatusForSpeed(speedKmS: number): { label: string; tone: 'calm' | 'watch' | 'hot' } {
+  if (speedKmS >= 4.85) return { label: 'Priority', tone: 'hot' }
+  if (speedKmS >= 3.55) return { label: 'Watch', tone: 'watch' }
+  return { label: 'OK', tone: 'calm' }
+}
+
+function syncTableColumns(): void {
+  const thead = document.getElementById('orbital-thead')
+  const foot = document.getElementById('orbital-sheet-foot') as HTMLTableCellElement | null
+  const wrap = document.getElementById('orbital-table-wrap')
+  const sheet = document.getElementById('orbital-data-sheet')
+  const cap = document.getElementById('orbital-table-caption')
+  const tbl = document.querySelector('.orbital-table--assessment')
+  if (!thead || !foot) return
+
+  const n = tableColumnCount()
+  foot.colSpan = n
+
+  sheet?.classList.toggle('orbital-data-sheet--precision', magical.precision)
+  wrap?.classList.toggle('orbital-table-wrap--detail', magical.precision)
+  tbl?.classList.toggle('orbital-table--compact', !magical.precision)
+
+  if (magical.precision) {
+    thead.innerHTML = `
+    <tr>
+      <th scope="col" class="orbital-th" title="Which track (1–6) and its short label in this exercise.">
+        <span class="orbital-th__main">Track</span>
+        <span class="orbital-th__sub">number · label</span>
+      </th>
+      <th scope="col" class="orbital-th" title="Smaller or larger object by radar size in this demo, with an estimated width in meters.">
+        <span class="orbital-th__main">Size</span>
+        <span class="orbital-th__sub">smaller / larger · width est. (m)</span>
+      </th>
+      <th scope="col" class="orbital-th orbital-th--numeric">
+        <abbr class="orbital-th__main" title="How fast the object moves in the simulation (kilometers per second).">Speed</abbr>
+        <span class="orbital-th__sub">km/s</span>
+      </th>
+      <th scope="col" class="orbital-th">
+        <abbr class="orbital-th__main" title="Direction and distance in the flat radar picture—training labels.">Direction</abbr>
+        <span class="orbital-th__sub">bearing · distance (AU)</span>
+      </th>
+      <th scope="col" class="orbital-th orbital-th--numeric">
+        <abbr class="orbital-th__main" title="Synthetic magnetic field strength along the path for this exercise (nanotesla).">Mag field</abbr>
+        <span class="orbital-th__sub">nT</span>
+      </th>
+      <th scope="col" class="orbital-th orbital-th--sig">
+        <abbr class="orbital-th__main" title="A short signature combining field and speed.">Signature</abbr>
+        <span class="orbital-th__sub">field · speed id</span>
+      </th>
+    </tr>`
+    if (cap) {
+      cap.textContent =
+        'Up to six practice tracks around Earth. Full table: track, size, speed, direction, synthetic magnetic field, and signature. Simulated only.'
+    }
+  } else {
+    thead.innerHTML = `
+    <tr>
+      <th scope="col" class="orbital-th" title="Track number and short label.">
+        <span class="orbital-th__main">Track</span>
+        <span class="orbital-th__sub"># · label</span>
+      </th>
+      <th scope="col" class="orbital-th" title="Size band and estimated width in meters.">
+        <span class="orbital-th__main">Size</span>
+        <span class="orbital-th__sub">band · ~m</span>
+      </th>
+      <th scope="col" class="orbital-th orbital-th--numeric orbital-th--emph">
+        <abbr class="orbital-th__main" title="Speed in the simulation (km/s).">Speed</abbr>
+        <span class="orbital-th__sub">km/s</span>
+      </th>
+      <th scope="col" class="orbital-th orbital-th--emph">
+        <span class="orbital-th__main">Status</span>
+        <span class="orbital-th__sub">attention</span>
+      </th>
+    </tr>`
+    if (cap) {
+      cap.textContent =
+        'Tracks near Earth in this exercise: track, size, speed, and a simple status. Turn on Extra decimal places for full technical columns.'
+    }
+  }
 }
 
 function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): ThreatRow | null {
@@ -641,7 +827,7 @@ function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): Thr
 
   return {
     trackLine: `Track ${a.num}`,
-    simRefLine: `Sim label · ${a.name}`,
+    simRefLine: a.name,
     speedKmS,
     collisionLabel,
     magneticNT,
@@ -743,27 +929,54 @@ function closeImpactModal(): void {
   document.getElementById('orbital-impact-modal')?.classList.add('orbital-modal--hidden')
 }
 
+function pulseLevelPlain(level: 1 | 2 | 3): string {
+  return level === 3 ? 'L3 (strong pulse)' : level === 2 ? 'L2 (medium pulse)' : 'L1 (gentle pulse)'
+}
+
+function pulseLevelLongLabel(level: 1 | 2 | 3): string {
+  return level === 3 ? 'L3 — strong pulse' : level === 2 ? 'L2 — medium pulse' : 'L1 — gentle pulse'
+}
+
+function clearWaveFeedbackUi(): void {
+  waveFeedbackClearAnimT = 0
+  document.getElementById('orbital-wave-feedback')?.replaceChildren()
+}
+
 function openRescueModal(r: RescueReport): void {
   const modal = document.getElementById('orbital-rescue-modal')
   const body = document.getElementById('orbital-rescue-report-body')
   if (!modal || !body) return
   const lvlLabel =
-    r.waveLevel === 3 ? 'Level 3 — maximum (best coupling)' : r.waveLevel === 2 ? 'Level 2 — medium' : 'Level 1 — low'
+    r.waveLevel === 3 ? 'Level 3 — strong' : r.waveLevel === 2 ? 'Level 2 — medium' : 'Level 1 — gentle'
+  const lvlYou = pulseLevelPlain(r.waveLevel)
   const cls = formatBodyClassLabel(r.bodyClass)
   const bp = magical.precision ? 2 : 1
   const utcDisp = r.utcIso.replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+  const ttiStr = r.ttiBeforeWallS.toFixed(magical.precision ? 2 : 1)
+  const summaryPlain = magical.precision
+    ? `<p class="orbital-rescue-plain__p"><strong>What changed</strong> · In this 2-D sim the pulse rotated the velocity toward the limb while keeping speed at <span class="orbital-mono">${formatSpeed(r.speedKmSAfter)} km/s</span>. Time to impact before the pulse was ≈<span class="orbital-mono">${ttiStr}</span>s (at your sim speed). Signature <span class="orbital-mono">${escapeHtml(r.sigBefore)}</span> → <span class="orbital-mono">${escapeHtml(r.sigAfter)}</span>.</p>`
+    : `<p class="orbital-rescue-plain__p"><strong>What changed</strong> · The training pulse bent the path sideways; speed stayed <span class="orbital-mono">${formatSpeed(r.speedKmSAfter)} km/s</span>. Before the pulse, impact was ≈<span class="orbital-mono">${ttiStr}</span>s away at your current sim speed.</p>`
+
   body.innerHTML = `
+    <div class="orbital-rescue-banner orbital-rescue-banner--success" role="status">
+      <span class="orbital-rescue-banner__badge">Success</span>
+      <p class="orbital-rescue-banner__lead">Earth collision-alert cleared for this track in the exercise.</p>
+    </div>
+    <div class="orbital-rescue-plain">
+      <p class="orbital-rescue-plain__p"><strong>You</strong> · Fired <strong>${escapeHtml(lvlYou)}</strong> on <strong>Track ${r.num}</strong> <span class="orbital-mono">(${escapeHtml(r.name)})</span>.</p>
+      ${summaryPlain}
+    </div>
     <dl class="orbital-rescue-dl">
       <dt>Report time (UTC)</dt><dd class="orbital-mono">${escapeHtml(utcDisp)}</dd>
-      <dt>Track</dt><dd><strong>Track ${r.num}</strong> · sim label <span class="orbital-mono">${escapeHtml(r.name)}</span></dd>
-      <dt>Class</dt><dd>${cls} · Ø<sub>est</sub> <span class="orbital-mono">${r.equivDiameterM}</span> m</dd>
-      <dt>Magnetospheric pulse</dt><dd>${escapeHtml(lvlLabel)}</dd>
-      <dt>TTI before pulse</dt><dd class="orbital-mono">≈${r.ttiBeforeWallS.toFixed(magical.precision ? 2 : 1)} s (wall, at sim×)</dd>
-      <dt>EM–V ID (before → after)</dt><dd class="orbital-mono">${escapeHtml(r.sigBefore)} → ${escapeHtml(r.sigAfter)}</dd>
-      <dt>|v| after pulse</dt><dd class="orbital-mono">${formatSpeed(r.speedKmSAfter)} km/s</dd>
-      <dt>|B| after pulse (path model)</dt><dd class="orbital-mono">${r.magneticNTAfter.toFixed(bp)} nT</dd>
+      <dt>Track</dt><dd><strong>Track ${r.num}</strong> · <span class="orbital-mono">${escapeHtml(r.name)}</span></dd>
+      <dt>Class</dt><dd>${cls} · ~<span class="orbital-mono">${r.equivDiameterM}</span> m</dd>
+      <dt>Pulse</dt><dd>${escapeHtml(lvlLabel)}</dd>
+      <dt>Time to impact (before)</dt><dd class="orbital-mono">≈${ttiStr} s</dd>
+      <dt>Signature (before → after)</dt><dd class="orbital-mono">${escapeHtml(r.sigBefore)} → ${escapeHtml(r.sigAfter)}</dd>
+      <dt>Speed after</dt><dd class="orbital-mono">${formatSpeed(r.speedKmSAfter)} km/s</dd>
+      <dt>Mag field after (model)</dt><dd class="orbital-mono">${r.magneticNTAfter.toFixed(bp)} nT</dd>
     </dl>
-    <p class="orbital-rescue-outcome"><strong>Outcome</strong> · Trajectory cleared from the Earth collision-alert horizon under the current 2-D projection. Simulated impact hazard mitigated. Continue nominal surveillance.</p>
+    <p class="orbital-rescue-outcome"><strong>Result</strong> · Training hazard for this approach is mitigated. Resume surveillance when you close this report.</p>
   `
   modal.classList.remove('orbital-modal--hidden')
   document.getElementById('orbital-rescue-dismiss')?.focus()
@@ -786,11 +999,9 @@ function updateMagneticWaveShieldState(_animT: number): void {
   }
 }
 
-function deployMagneticWave(level: 1 | 2 | 3): void {
-  if (simulationPaused || phase !== 'space') return
-  const threat = findPrimaryEarthCollisionThreat(lastFrameAnimT)
-  if (!threat) return
+type ActiveThreatSnapshot = NonNullable<ReturnType<typeof findPrimaryEarthCollisionThreat>>
 
+function executeMagneticWavePulse(level: 1 | 2 | 3, threat: ActiveThreatSnapshot): void {
   const a = threat.a
   const ttiBefore = threat.tti
   const sigBefore = formatEmVelSignature(threat.magneticNT, threat.speedKmS)
@@ -805,15 +1016,19 @@ function deployMagneticWave(level: 1 | 2 | 3): void {
   lastCollisionAlertText = ''
 
   const fb = document.getElementById('orbital-wave-feedback')
+  const youDid = escapeHtml(pulseLevelPlain(level))
+  const tryHint =
+    level < 3 ?
+      'Try a <strong>stronger pulse (L3)</strong> while the buttons stay unlocked.'
+    : 'Even <strong>L3</strong> was not enough for this geometry—the track is still inside the alert window. Keep watching; geometry may change.'
 
   if (trajectoryClearedImmediateThreat(a)) {
     magneticWaveBurstSpanMs = 2400
     magneticWavePulseUntil = lastFrameAnimT + magneticWaveBurstSpanMs
     magneticWaveCelebrationUntilAnimT = lastFrameAnimT + magneticWaveBurstSpanMs
     magneticWaveShieldTrackNum = null
-    waveFeedbackText = ''
     waveFeedbackClearAnimT = 0
-    if (fb) fb.textContent = ''
+    if (fb) fb.replaceChildren()
     const report: RescueReport = {
       utcIso: new Date().toISOString(),
       num: a.num,
@@ -833,10 +1048,46 @@ function deployMagneticWave(level: 1 | 2 | 3): void {
     magneticWaveBurstSpanMs = 780
     magneticWavePulseUntil = lastFrameAnimT + magneticWaveBurstSpanMs
     magneticWaveShieldTrackNum = a.num
-    waveFeedbackText = `Pulse L${level} applied — Track ${a.num} still inside intercept window. Try a stronger pulse (L3 = best).`
-    waveFeedbackClearAnimT = lastFrameAnimT + 5000
-    if (fb) fb.textContent = waveFeedbackText
+    waveFeedbackClearAnimT = lastFrameAnimT + 9000
+    if (fb) {
+      fb.innerHTML = `<div class="orbital-wave-feedback--result orbital-wave-feedback--failure" role="status">
+        <p class="orbital-wave-feedback__verdict"><span class="orbital-wave-feedback__verdict-label">Result</span> · <strong>Not cleared</strong></p>
+        <ul class="orbital-wave-feedback__facts">
+          <li><span class="orbital-wave-feedback__fact-key">You</span> · Protect Earth <strong>${youDid}</strong> on <strong>Track ${a.num}</strong>.</li>
+          <li><span class="orbital-wave-feedback__fact-key">What happened</span> · The path still crosses the collision-alert window in this training view—Earth remains at risk for this track.</li>
+          <li><span class="orbital-wave-feedback__fact-key">Next</span> · ${tryHint}</li>
+        </ul>
+      </div>`
+    }
   }
+}
+
+function deployMagneticWave(level: 1 | 2 | 3): void {
+  if (simulationPaused || phase !== 'space') return
+  const threat = findPrimaryEarthCollisionThreat(lastFrameAnimT)
+  if (!threat) return
+
+  const panel = document.getElementById('orbital-earth-defense')
+  const fb = document.getElementById('orbital-wave-feedback')
+  panel?.setAttribute('aria-busy', 'true')
+  waveFeedbackClearAnimT = 0
+
+  if (fb) {
+    fb.innerHTML = `<div class="orbital-wave-feedback--busy" role="status" aria-live="assertive">
+      <span class="orbital-wave-feedback__phase">Now</span>
+      <p class="orbital-wave-feedback__busy-text">Sending <strong>${escapeHtml(pulseLevelLongLabel(level))}</strong> toward <strong>Track ${threat.a.num}</strong>…</p>
+    </div>`
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      try {
+        executeMagneticWavePulse(level, threat)
+      } finally {
+        panel?.removeAttribute('aria-busy')
+      }
+    })
+  })
 }
 
 function onMagneticWaveClick(e: Event): void {
@@ -1015,54 +1266,118 @@ function drawAsteroid(a: Asteroid, spacePhase: boolean): void {
   ctx.fillText(label, a.x, a.y - a.r - 7)
 }
 
+function drawIntroHudFrame(x0: number, y0: number, x1: number, y1: number, len: number): void {
+  ctx.strokeStyle = 'rgba(91, 159, 212, 0.22)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(x0, y0 + len)
+  ctx.lineTo(x0, y0)
+  ctx.lineTo(x0 + len, y0)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(x1 - len, y0)
+  ctx.lineTo(x1, y0)
+  ctx.lineTo(x1, y0 + len)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(x1, y1 - len)
+  ctx.lineTo(x1, y1)
+  ctx.lineTo(x1 - len, y1)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(x0 + len, y1)
+  ctx.lineTo(x0, y1)
+  ctx.lineTo(x0, y1 - len)
+  ctx.stroke()
+}
+
 function drawIntro(animT: number): void {
   const w = logicalW
   const h = logicalH
   const cx = w / 2
   const cyIntro = h * 0.42
   const rg = ctx.createRadialGradient(cx, cyIntro * 0.85, 0, cx, cyIntro, Math.max(w, h) * 0.72)
-  rg.addColorStop(0, 'rgba(14, 32, 58, 0.55)')
-  rg.addColorStop(0.45, 'rgba(5, 12, 26, 1)')
-  rg.addColorStop(1, '#02040a')
+  rg.addColorStop(0, 'rgba(12, 28, 52, 0.62)')
+  rg.addColorStop(0.4, 'rgba(4, 10, 22, 1)')
+  rg.addColorStop(1, '#010308')
   ctx.fillStyle = rg
   ctx.fillRect(0, 0, w, h)
   const g = ctx.createLinearGradient(0, 0, 0, h)
-  g.addColorStop(0, 'rgba(8, 22, 42, 0.9)')
-  g.addColorStop(0.45, 'transparent')
-  g.addColorStop(1, 'rgba(2, 6, 14, 1)')
+  g.addColorStop(0, 'rgba(6, 18, 38, 0.95)')
+  g.addColorStop(0.42, 'transparent')
+  g.addColorStop(1, 'rgba(1, 4, 10, 1)')
   ctx.fillStyle = g
   ctx.fillRect(0, 0, w, h)
 
   drawStars()
 
+  const margin = 14
+  drawIntroHudFrame(margin, margin, w - margin, h - margin, 18)
+
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
+  if (!reduceMotion) {
+    const scanY = (animT * 0.045) % (h + 40)
+    ctx.strokeStyle = 'rgba(91, 159, 212, 0.06)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(0, scanY)
+    ctx.lineTo(w, scanY)
+    ctx.stroke()
+  }
+
+  ctx.fillStyle = 'rgba(110, 155, 195, 0.82)'
+  ctx.font = '600 9px ui-monospace, "IBM Plex Mono", monospace'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  ctx.fillText('HACHAL · STANDBY · AWAITING OPERATOR LINK', margin + 8, margin + 6)
+  ctx.textAlign = 'right'
+  ctx.fillText(`T+${(animT / 1000).toFixed(1)}s`, w - margin - 8, margin + 6)
+  ctx.textAlign = 'left'
+
   const orbitR = Math.min(w, h) * 0.36
   ctx.save()
-  ctx.strokeStyle = 'rgba(100, 150, 195, 0.07)'
+  ctx.strokeStyle = 'rgba(95, 150, 200, 0.11)'
   ctx.lineWidth = 1
-  ctx.setLineDash([4, 14])
+  ctx.setLineDash([5, 12])
+  if (!reduceMotion) ctx.lineDashOffset = -(animT * 0.018) % 17
   ctx.beginPath()
   ctx.ellipse(cx, cyIntro, orbitR * 1.02, orbitR * 0.88, 0, 0, Math.PI * 2)
   ctx.stroke()
   ctx.setLineDash([])
+  ctx.lineDashOffset = 0
   ctx.restore()
+
+  if (!reduceMotion) {
+    for (let i = 0; i < 6; i++) {
+      const ang = (i / 6) * Math.PI * 2 + animT * 0.00035
+      const px = cx + Math.cos(ang) * orbitR * 0.96
+      const py = cyIntro + Math.sin(ang) * orbitR * 0.83
+      const alpha = 0.2 + 0.14 * Math.sin(animT * 0.0018 + i * 1.1)
+      ctx.fillStyle = `rgba(130, 185, 225, ${alpha})`
+      ctx.beginPath()
+      ctx.arc(px, py, 2.4, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
 
   const r = Math.min(w, h) * 0.14
   const pulse = (Math.sin(animT * 0.003) + 1) * 0.5
   drawEarth(cx, cyIntro, r, pulse)
 
-  const titlePx = Math.max(22, w * 0.042)
-  ctx.fillStyle = 'rgba(232, 238, 245, 0.94)'
+  const titlePx = Math.max(21, w * 0.038)
+  ctx.fillStyle = 'rgba(236, 242, 250, 0.96)'
   ctx.font = `600 ${titlePx}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
   ctx.textAlign = 'center'
-  ctx.fillText('Earth — primary object', cx, cyIntro + r + 48)
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText('Geocentric surveillance — primary body', cx, cyIntro + r + 46)
 
-  ctx.fillStyle = 'rgba(148, 170, 198, 0.88)'
-  ctx.font = `400 ${Math.max(13, w * 0.022)}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
-  ctx.fillText('Orbital surveillance stack arms after you continue.', cx, cyIntro + r + 76)
+  ctx.fillStyle = 'rgba(155, 180, 208, 0.9)'
+  ctx.font = `500 ${Math.max(12, w * 0.019)}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
+  ctx.fillText('Six-track correlation, Protect Earth channel, and mission console load on handshake.', cx, cyIntro + r + 74)
 
-  ctx.fillStyle = 'rgba(120, 175, 220, 0.9)'
-  ctx.font = `500 ${Math.max(12, w * 0.02)}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
-  ctx.fillText('Tap or press Enter / Space to enter the mission field', cx, h - 52)
+  ctx.fillStyle = 'rgba(130, 185, 225, 0.92)'
+  ctx.font = `600 ${Math.max(11, w * 0.018)}px "IBM Plex Sans", "Segoe UI", system-ui, sans-serif`
+  ctx.fillText('Touch Earth or press Enter / Space — establish mission link', cx, h - 50)
 }
 
 function drawCorridorLine(ax: number, ay: number, ex: number, ey: number, lightId: number): void {
@@ -1176,58 +1491,78 @@ function drawSpace(animT: number): void {
     drawAsteroid(a, true)
   }
 
-  updateTable(threats, animT)
-  updateFleetReadout(animT)
+  if (!simulationPaused && animT - lastTableFleetDomMs >= TABLE_FLEET_DOM_MIN_MS) {
+    lastTableFleetDomMs = animT
+    updateTable(threats, animT)
+    updateFleetReadout(animT)
+  }
+
+  if (phaseLine && phase === 'space' && !simulationPaused) {
+    const prec = magical.precision ? 3 : 1
+    phaseLine.textContent = `t=${(animT / 1000).toFixed(prec)}s · sim×${simTimeScale.toFixed(2)} · v̄cap ${velocityCapPx.toFixed(0)} px/s`
+  }
+
   updateCollisionAlertBanner(animT)
 }
 
 function updateTable(threats: ThreatRow[], animT: number): void {
   if (!tableBody) return
 
+  const ncol = tableColumnCount()
+
   if (threats.length === 0) {
     tableBody.innerHTML = `
       <tr class="orbital-table__empty">
-        <td colspan="6">
+        <td colspan="${ncol}">
           <div class="orbital-table__empty-inner">
-            <span class="orbital-table__empty-title">No corridor occupancy</span>
-            <span class="orbital-table__empty-detail">No track passes the Earth-fixed resistance-corridor gate at this update cycle.</span>
+            <span class="orbital-table__empty-title">No tracks in the watch ring</span>
+            <span class="orbital-table__empty-detail">Nothing in the training zone around Earth right now—rows appear when a track enters.</span>
           </div>
         </td>
       </tr>`
   } else {
     const rows = threats
-      .map(
-        (t) => `
-      <tr class="orbital-table__row${t.speedKmS >= 4.85 ? ' orbital-table__row--hot' : ''}">
+      .map((t) => {
+        const hot = t.speedKmS >= 4.85
+        const st = tableStatusForSpeed(t.speedKmS)
+        const bp = magical.precision ? 2 : 1
+        const tail = magical.precision
+          ? `
+        <td class="orbital-table__cell orbital-table__cell--geometry orbital-mono" data-label="Direction">
+          <span class="orbital-table__stack-value">${escapeHtml(t.collisionLabel)}</span>
+        </td>
+        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono" data-label="Mag field (nT)">
+          <span class="orbital-table__stack-value">${t.magneticNT.toFixed(bp)}</span>
+        </td>
+        <td class="orbital-table__cell orbital-table__cell--sig orbital-mono" data-label="Signature">
+          <span class="orbital-table__stack-value">${escapeHtml(t.emVelSignature)}</span>
+        </td>`
+          : `
+        <td class="orbital-table__cell orbital-table__cell--status orbital-table__cell--status--${st.tone}" data-label="Status">
+          <span class="orbital-table__stack-value">${st.label}</span>
+        </td>`
+        return `
+      <tr class="orbital-table__row${hot ? ' orbital-table__row--hot' : ''}">
         <td class="orbital-table__cell orbital-table__cell--designator" data-label="Track">
           <span class="orbital-table__stack-value orbital-table__cell--with-light">
-            <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Track display light" aria-hidden="true"></span>
+            <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Color for this track on radar and map" aria-hidden="true"></span>
             <span class="orbital-table__designator-text">
               <span class="orbital-table__designator-main">${escapeHtml(t.trackLine)}</span>
               <span class="orbital-table__designator-sub orbital-mono">${escapeHtml(t.simRefLine)}</span>
             </span>
           </span>
         </td>
-        <td class="orbital-table__cell orbital-table__cell--class" data-label="Size (sim)">
+        <td class="orbital-table__cell orbital-table__cell--class" data-label="Size">
           <span class="orbital-table__stack-value">
-            <span class="orbital-table__class-main">${t.bodyClass === 'MET' ? 'Smaller object' : 'Larger object'}</span>
-            <span class="orbital-table__class-sub orbital-mono">Ø<sub>est</sub> ${t.equivDiameterM} m</span>
+            <span class="orbital-table__class-main">${t.bodyClass === 'MET' ? 'Smaller' : 'Larger'}</span>
+            <span class="orbital-table__class-sub orbital-mono">~${t.equivDiameterM} m</span>
           </span>
         </td>
-        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono" data-label="|v| (km/s)">
+        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono orbital-table__cell--speed${hot ? ' orbital-table__cell--speed-hot' : ''}" data-label="Speed (km/s)">
           <span class="orbital-table__stack-value">${formatSpeed(t.speedKmS)}</span>
-        </td>
-        <td class="orbital-table__cell orbital-table__cell--geometry orbital-mono" data-label="Corridor LOS">
-          <span class="orbital-table__stack-value">${escapeHtml(t.collisionLabel)}</span>
-        </td>
-        <td class="orbital-table__cell orbital-table__cell--numeric orbital-mono" data-label="|B| (nT)">
-          <span class="orbital-table__stack-value">${magical.precision ? t.magneticNT.toFixed(2) : t.magneticNT.toFixed(1)}</span>
-        </td>
-        <td class="orbital-table__cell orbital-table__cell--sig orbital-mono" data-label="EM–V ID">
-          <span class="orbital-table__stack-value">${escapeHtml(t.emVelSignature)}</span>
-        </td>
-      </tr>`,
-      )
+        </td>${tail}
+      </tr>`
+      })
       .join('')
     tableBody.innerHTML = rows
   }
@@ -1238,11 +1573,6 @@ function updateTable(threats: ThreatRow[], animT: number): void {
     const d = new Date()
     utcEl.setAttribute('datetime', d.toISOString())
     utcEl.textContent = d.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
-  }
-
-  if (phaseLine) {
-    const prec = magical.precision ? 3 : 1
-    phaseLine.textContent = `t=${(animT / 1000).toFixed(prec)}s · sim×${simTimeScale.toFixed(2)} · v̄cap ${velocityCapPx.toFixed(0)} px/s`
   }
 }
 
@@ -1259,10 +1589,8 @@ function updateCollisionAlertBanner(animT: number): void {
   const textEl = document.getElementById('orbital-earth-defense-status')
   if (!el || !textEl) return
 
-  const fb = document.getElementById('orbital-wave-feedback')
-  if (animT > waveFeedbackClearAnimT && waveFeedbackText) {
-    waveFeedbackText = ''
-    if (fb) fb.textContent = ''
+  if (waveFeedbackClearAnimT > 0 && animT > waveFeedbackClearAnimT) {
+    clearWaveFeedbackUi()
   }
 
   const clearSeverity = (): void => {
@@ -1292,7 +1620,8 @@ function updateCollisionAlertBanner(animT: number): void {
     el.classList.add('orbital-earth-defense--standby')
     setWaveButtonsDisabled(true)
     lastCollisionAlertText = ''
-    const standbyHtml = `<span class="orbital-earth-defense__standby-label">Intercept status</span> · <strong>All clear</strong> — no track is on an Earth-collision path inside the alert window (about <span class="orbital-mono">${COLLISION_ALERT_TTI_MAX_S} s</span> simulated time, using wall clock at your current sim speed). You always have <strong>six numbered tracks</strong> on radar (<strong>Track 1–6</strong>); the table shows <strong>smaller vs larger</strong> objects by radar size. When a collision gets close in time, the <strong>L1 / L2 / L3</strong> buttons <strong>unlock automatically</strong> — tap one to try a deflection in this training sim.`
+    clearWaveFeedbackUi()
+    const standbyHtml = `<span class="orbital-earth-defense__standby-label">Safety status</span> · <strong>All clear</strong> — no track is heading for Earth inside the next <span class="orbital-mono">${COLLISION_ALERT_TTI_MAX_S} s</span> of simulated time. <strong>Six tracks</strong> stay on radar; if risk rises, <strong>L1–L3</strong> unlock here so you can try a training pulse.`
     if (standbyHtml !== lastEarthDefenseStandbyHtml) {
       textEl.innerHTML = standbyHtml
       lastEarthDefenseStandbyHtml = standbyHtml
@@ -1313,7 +1642,9 @@ function updateCollisionAlertBanner(animT: number): void {
   const dM = equivDiameterMFromRadarR(best.a.r)
   const ttiStr = best.tti.toFixed(magical.precision ? 2 : 1)
   const bPrec = magical.precision ? 2 : 1
-  const html = `<span class="orbital-collision-alert__label">Earth collision — deploy pulse</span> · <strong>Track ${best.a.num}</strong> <span class="orbital-mono">(${escapeHtml(best.a.name)})</span> · ${cls} · Ø<sub>est</sub> <span class="orbital-mono">${dM}</span> m · TTI <span class="orbital-mono">≈${ttiStr}</span> s (wall, at current sim×) · <span class="orbital-mono">|v| ${formatSpeed(best.speedKmS)} km/s</span> · <span class="orbital-mono">|B| ${best.magneticNT.toFixed(bPrec)} nT</span> · EM–V ID <span class="orbital-mono">${escapeHtml(sig)}</span> · Tap <strong>L1–L3</strong> below to deflect.`
+  const html = magical.precision
+    ? `<span class="orbital-collision-alert__label">Earth at risk — choose a pulse</span> · <strong>Track ${best.a.num}</strong> <span class="orbital-mono">(${escapeHtml(best.a.name)})</span> · ${cls} · est. width <span class="orbital-mono">${dM}</span> m · time to impact <span class="orbital-mono">≈${ttiStr}</span> s (at your sim speed) · speed <span class="orbital-mono">${formatSpeed(best.speedKmS)} km/s</span> · mag field <span class="orbital-mono">${best.magneticNT.toFixed(bPrec)} nT</span> · signature <span class="orbital-mono">${escapeHtml(sig)}</span> · Tap <strong>L1–L3</strong> below.`
+    : `<span class="orbital-collision-alert__label">Earth at risk</span> · <strong>Track ${best.a.num}</strong> · impact in ≈<span class="orbital-mono">${ttiStr}</span>s · speed <span class="orbital-mono">${formatSpeed(best.speedKmS)} km/s</span> · Tap <strong>L1–L3</strong> to deflect.`
 
   if (html !== lastCollisionAlertText) {
     textEl.innerHTML = html
@@ -1332,19 +1663,27 @@ function updateFleetReadout(animT: number): void {
     const diam = equivDiameterMFromRadarR(a.r)
     const swatches = TRACK_LIGHT_PRESETS.map((p) => {
       const active = a.lightId === p.id
-      return `<button type="button" class="orbital-light-swatch${active ? ' is-active' : ''}" data-light-track="${a.num}" data-light-id="${p.id}" title="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)}" aria-pressed="${active ? 'true' : 'false'}" style="--swatch-fill:${p.fill};--swatch-stroke:${p.stroke}"></button>`
+      return `<button type="button" class="orbital-light-swatch${active ? ' is-active' : ''}" data-light-track="${a.num}" data-light-id="${p.id}" title="Use ${escapeHtml(p.name)} for Track ${a.num} on radar, lines, and table" aria-label="Track ${a.num}: set color to ${escapeHtml(p.name)}" aria-pressed="${active ? 'true' : 'false'}" style="--swatch-fill:${p.fill};--swatch-stroke:${p.stroke}"></button>`
     }).join('')
+    const fuseHtml =
+      magical.chaosVelocity ?
+        `<span class="orbital-fleet__fuse orbital-mono" title="Chaos surge level">${fuseP}%</span>`
+      : ''
+    const telemetryHtml =
+      magical.precision ?
+        `<div class="orbital-fleet__telemetry orbital-mono" aria-label="Size, width, signature">${sizeBand} · ~${diam} m · ${escapeHtml(sig)}</div>`
+      : `<div class="orbital-fleet__telemetry orbital-fleet__telemetry--compact" aria-label="Size and width">${sizeBand} · ~${diam} m</div>`
     return `<div class="orbital-fleet__row" data-track="${a.num}">
-      <div class="orbital-fleet__lights" role="toolbar" aria-label="Display light · track ${a.num}">
+      <div class="orbital-fleet__lights" role="toolbar" aria-label="Color choices for track ${a.num}">
         ${swatches}
       </div>
       <div class="orbital-fleet__metrics">
         <span class="orbital-fleet__track-label"><strong>Track ${a.num}</strong></span>
-        <span class="orbital-fleet__name orbital-mono" title="Internal sim label">${escapeHtml(a.name)}</span>
-        <span class="orbital-mono">${formatSpeed(kms)} km/s</span>
-        <span class="orbital-mono">fuse ${fuseP}%</span>
+        <span class="orbital-fleet__name orbital-mono" title="Short label for this track in the table">${escapeHtml(a.name)}</span>
+        <span class="orbital-fleet__speed orbital-mono" title="Speed in the simulation">${formatSpeed(kms)} km/s</span>
+        ${fuseHtml}
       </div>
-      <div class="orbital-fleet__telemetry orbital-mono" aria-label="Size band, estimated diameter, EM–velocity signature">${sizeBand} · Ø~${diam} m · ${escapeHtml(sig)}</div>
+      ${telemetryHtml}
     </div>`
   })
   fleetEl.innerHTML = lines.join('')
@@ -1361,6 +1700,7 @@ function onFleetLightPointer(e: Event): void {
   if (!a) return
   a.lightId = lid
   persistLightId(num, lid)
+  invalidateTelemetryDomSchedule()
 }
 
 function escapeHtml(value: string): string {
@@ -1372,19 +1712,40 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#039;')
 }
 
+/** Inline “i” tooltip: keyboard-focusable, aria-describedby to bubble. */
+function orbitalUxTip(idSuffix: string, buttonAria: string, bubble: string): string {
+  const uid = `oux-${idSuffix}`
+  return `<span class="orbital-tooltip">
+    <button type="button" class="orbital-tooltip__btn" id="${uid}-b" aria-describedby="${uid}-t" aria-label="${escapeHtml(buttonAria)}">i</button>
+    <span class="orbital-tooltip__bubble" id="${uid}-t" role="tooltip">${escapeHtml(bubble)}</span>
+  </span>`
+}
+
 function applySelfDestructVelocity(a: Asteroid, dt: number): void {
   const chaos = magical.chaosVelocity ? 1.65 : 1
   a.destructPhase += dt * (2.1 * chaos)
   a.fuse = Math.min(1, a.fuse + dt * (0.014 + (magical.chaosVelocity ? 0.01 : 0)))
   const surge =
     1 +
-    0.38 * Math.sin(a.destructPhase) * (0.55 + a.fuse) +
-    0.42 * a.fuse * a.fuse * chaos
-  let spd = a.baseSpeed * surge
-  spd = Math.min(spd, velocityCapPx)
-  const mag = Math.hypot(a.vx, a.vy) || 1
-  a.vx = (a.vx / mag) * spd
-  a.vy = (a.vy / mag) * spd
+    0.32 * Math.sin(a.destructPhase) * (0.55 + a.fuse) +
+    0.4 * a.fuse * a.fuse * chaos
+  const targetSpd = Math.min(a.baseSpeed * surge, velocityCapPx)
+  let mag = Math.hypot(a.vx, a.vy)
+  if (mag < 1e-5) {
+    const du = earthX - a.x
+    const dv = earthY - a.y
+    const d = Math.hypot(du, dv) || 1
+    a.vx = (du / d) * a.baseSpeed
+    a.vy = (dv / d) * a.baseSpeed
+    mag = a.baseSpeed
+  }
+  const lam = magical.chaosVelocity ? SPEED_RELAX_LAMBDA_CHAOS : SPEED_RELAX_LAMBDA
+  const alpha = 1 - Math.exp(-lam * dt)
+  a.speedRelax += alpha * (targetSpd - a.speedRelax)
+  const newMag = Math.max(0.001, a.speedRelax)
+  const s = newMag / mag
+  a.vx *= s
+  a.vy *= s
 }
 
 function checkSurfaceImpact(animT: number): void {
@@ -1425,15 +1786,20 @@ function step(ts: number): void {
 
   if (phase === 'space' && !simulationPaused) {
     const w = logicalW
-    const h = logicalH
-    for (const a of asteroids) {
-      applySelfDestructVelocity(a, dt)
-      a.x += a.vx * dt
-      a.y += a.vy * dt
-      a.x = wrap(a.x, -40, w + 40)
-      a.y = wrap(a.y, -40, h + 40)
+    const canvasH = logicalH
+    let simRemain = dt
+    while (simRemain > 1e-9 && !simulationPaused) {
+      const subDt = Math.min(MAX_PHYS_SUBSTEP_S, simRemain)
+      for (const a of asteroids) {
+        applySelfDestructVelocity(a, subDt)
+        a.x += a.vx * subDt
+        a.y += a.vy * subDt
+        a.x = wrap(a.x, -40, w + 40)
+        a.y = wrap(a.y, -40, canvasH + 40)
+      }
+      checkSurfaceImpact(ts)
+      simRemain -= subDt
     }
-    checkSurfaceImpact(ts)
   }
 
   ctx.clearRect(0, 0, logicalW, logicalH)
@@ -1463,6 +1829,7 @@ function resize(): void {
       a.y *= sy
       a.vx *= sx
       a.vy *= sy
+      a.speedRelax = Math.max(1e-3, Math.hypot(a.vx, a.vy))
     }
   }
 
@@ -1478,14 +1845,16 @@ function resize(): void {
   }
 }
 
-function goSpace(): void {
+function finishGoSpaceHandoff(): void {
   phase = 'space'
   simulationPaused = false
+  invalidateTelemetryDomSchedule()
   closeImpactModal()
   closeRescueModal()
   appMountEl?.classList.add('orbital-app--space')
-  document.getElementById('orbital-workspace')?.classList.remove('orbital-workspace--intro')
-  document.getElementById('orbital-workspace')?.classList.add('orbital-workspace--split')
+  const ws = document.getElementById('orbital-workspace')
+  ws?.classList.remove('orbital-workspace--intro', 'orbital-workspace--intro-exit')
+  ws?.classList.add('orbital-workspace--split')
   document.getElementById('orbital-intro-cta')?.classList.add('orbital-intro-cta--hidden')
   resize()
   spawnAsteroids(logicalW, logicalH)
@@ -1494,6 +1863,31 @@ function goSpace(): void {
   magneticWavePulseUntil = 0
   magneticWaveBurstStartAnimT = 0
   clearMagneticWaveShield()
+}
+
+function goSpace(): void {
+  if (phase !== 'intro' || introHandoffActive) return
+  introHandoffActive = true
+  const ws = document.getElementById('orbital-workspace')
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
+  const holdMs = reduced ? 0 : 380
+
+  if (!reduced) ws?.classList.add('orbital-workspace--intro-exit')
+
+  window.setTimeout(() => {
+    finishGoSpaceHandoff()
+    introHandoffActive = false
+    ws?.classList.remove('orbital-workspace--intro-exit')
+    if (!reduced) {
+      ws?.classList.add('orbital-workspace--split-enter')
+      requestAnimationFrame(() => {
+        ws?.classList.add('orbital-workspace--split-enter-active')
+      })
+      window.setTimeout(() => {
+        ws?.classList.remove('orbital-workspace--split-enter', 'orbital-workspace--split-enter-active')
+      }, 560)
+    }
+  }, holdMs)
 }
 
 let orbitalTutorialCleanup: (() => void) | null = null
@@ -1537,64 +1931,64 @@ type OrbitalTutorialStep = {
 
 const ORBITAL_TUTORIAL_STEPS: readonly OrbitalTutorialStep[] = [
   {
-    title: 'Welcome — what is this?',
-    body: 'This is a training demo in your browser: a radar view of Earth, six moving tracks, and pretend “Protect Earth” pulses. Nothing here connects to real satellites or official alerts. Use Next to walk through the screen, or Skip tour if you prefer to explore alone.',
+    title: 'HACHAL mission console',
+    body: 'You are in a browser-based mission console: geocentric display, six correlated tracks, and a Protect Earth response channel. It does not connect to live satellites or public alerts. Use Next for a panel-by-panel briefing, or Skip to operate unguided.',
     targetSelector: null,
   },
   {
-    title: 'The big radar circle',
-    body: 'Earth is in the middle. After you continue, you will see six dots moving inward — those are Track 1 through Track 6. Each track also has a small sim label (like a reference code); you can ignore it unless you need to match the table.',
+    title: 'Primary sensor plane',
+    body: 'Earth is the reference. After you establish the mission link, six tracks appear as inbound contacts (Track 1–6). Each has a short designation for correlation with the live list.',
     targetSelector: '#orbital-radar-bezel',
   },
   {
-    title: 'Open the main console',
-    body: 'Tap Earth (or press Enter or Space) to leave this intro. Then the radar moves beside the control panels, the Fleet list, and the live table. You can also use Enter mission below.',
+    title: 'Establish mission link',
+    body: 'Touch Earth or press Enter / Space to handshake into the full layout: radar, mission sidebar, fleet colors, and the near-Earth list. You can also use Enter mission below.',
     targetSelector: '#orbital-radar-bezel',
     primaryEnterMission: true,
   },
   {
-    title: 'Top buttons',
-    body: 'Tour — opens this guide again. Restart — new random paths for all six tracks. Sign out — locks the console and sends you back to the access code screen.',
+    title: 'Header actions',
+    body: 'Briefing — reopens this walkthrough. Restart — new track geometry for all six. Log out — ends the session in this tab and returns to secure access.',
     targetSelector: '.orbital-balloon__header-actions',
   },
   {
     title: 'Program vision',
-    body: 'The mandate block states what this system represents: connecting humanity to space advancement. It is narrative context, not live telemetry.',
+    body: 'Background reading: why this demo exists and how real planetary defense would be organized. It is story and context — not live data from space.',
     targetSelector: '.orbital-mandate',
   },
   {
-    title: 'Simulation control',
-    body: 'Sim speed × stretches or compresses simulated time. Velocity cap limits how fast tracks may move in the plane — useful for training pace.',
+    title: 'Training pace',
+    body: 'Sim speed changes how fast time runs in the exercise. Velocity cap limits how fast objects may move on the radar — handy when you want a calmer or tougher drill.',
     targetSelector: '.orbital-console-panel--sim',
   },
   {
-    title: 'Simulation modifiers',
-    body: 'Optional overlays: finer numeric readouts, fallout shading on Earth, chaotic velocity surges, and multi-band fallout when impacts occur.',
+    title: 'Optional screen overlays',
+    body: 'Checkboxes add extra visuals or harder behavior. “Extra decimal places” also expands the table with direction, magnetic field, and signature. Other toggles add impact shading, random speed spikes, and layered impact zones.',
     targetSelector: '.orbital-console-panel--modes',
   },
   {
-    title: 'Status strip',
-    body: 'The line below summarizes phase and field state (nominal, collision alert, etc.). It updates as the simulation runs.',
+    title: 'Mission status',
+    body: 'One live line summarizing what the simulation is doing right now (all clear, alert, etc.). It updates while the sim runs.',
     targetSelector: '.orbital-status-strip',
   },
   {
-    title: 'Protect Earth — magnetospheric pulse',
-    body: 'Detection uses radar and the corridor table. When a track breaches the Earth collision-alert window, L1–L3 unlock. Stronger pulses cost more deflection margin in this training model. Success yields an intercept report; shields may animate until the threat clears.',
+    title: 'Protect Earth',
+    body: 'When a track is on a collision course inside the short countdown, L1–L3 unlock. You will see what the pulse is doing, then either a clear success report or a structured “not cleared” note (what you did, what happened, what to try next).',
     targetSelector: '#orbital-earth-defense',
   },
   {
-    title: 'Fleet and display lights',
-    body: 'Each track has a color used on the radar blip, corridor line, and table marker. Choices persist for this browser session.',
+    title: 'Track colors',
+    body: 'Each track has a color on the radar dot, the line toward Earth, and the table. Swatches persist until you close the tab or log out.',
     targetSelector: '#orbital-fleet',
   },
   {
-    title: 'The live table',
-    body: 'Lists tracks that cross the “gate” around Earth: track number, a sim label, smaller vs larger object (by radar size in this demo), speed, and other training fields. On a phone, each row becomes an easy-to-read card.',
+    title: 'Objects near Earth (table)',
+    body: 'By default: track, size, speed, and a simple status (OK / Watch / Priority). Turn on Extra decimal places for the full technical columns. On a phone, each row becomes a short card.',
     targetSelector: '.orbital-data-sheet',
   },
   {
-    title: 'Impact and intercept reports',
-    body: 'A surface strike opens the impact modal with optional fallout bands. A successful deflection opens the intercept report. Both are training aids — not real alerts.',
+    title: 'Impact and deflection pop-ups',
+    body: 'A surface strike opens a modal with optional fallout bands. A successful Protect Earth pulse opens the deflection report. Both are training aids — not real alerts.',
     targetSelector: null,
   },
 ]
@@ -1627,7 +2021,7 @@ function mountOrbitalTutorial(root: HTMLElement): void {
       <h2 class="orbital-tutorial__title" id="orbital-tutorial-title"></h2>
       <p class="orbital-tutorial__body"></p>
       <div class="orbital-tutorial__actions orbital-tutorial__actions--main">
-        <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__skip">Skip tour</button>
+        <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__skip">Skip briefing</button>
         <div class="orbital-tutorial__nav">
           <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__prev">Back</button>
           <button type="button" class="orbital-btn orbital-btn--primary orbital-tutorial__next">Next</button>
@@ -1635,11 +2029,11 @@ function mountOrbitalTutorial(root: HTMLElement): void {
         </div>
       </div>
       <div class="orbital-tutorial__finish orbital-tutorial__finish--hidden">
-        <p class="orbital-tutorial__finish-lead">You have completed the guided tour.</p>
-        <p class="orbital-tutorial__finish-ask">How should we handle the tour on future visits?</p>
+        <p class="orbital-tutorial__finish-lead">Briefing complete.</p>
+        <p class="orbital-tutorial__finish-ask">How should we open the briefing on future visits?</p>
         <div class="orbital-tutorial__actions orbital-tutorial__actions--finish">
-          <button type="button" class="orbital-btn orbital-btn--primary orbital-tutorial__again">Run the tour next time I open the console</button>
-          <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__noskip">Use the console without the tour</button>
+          <button type="button" class="orbital-btn orbital-btn--primary orbital-tutorial__again">Show briefing next time I open the console</button>
+          <button type="button" class="orbital-btn orbital-btn--muted orbital-tutorial__noskip">Operate without the briefing</button>
         </div>
       </div>
     </div>
@@ -1697,7 +2091,7 @@ function mountOrbitalTutorial(root: HTMLElement): void {
     spotlightEl.classList.add('orbital-tutorial__spotlight--hidden')
     backdropEl.classList.add('orbital-tutorial__backdrop--dim')
     stepLabel.textContent = ''
-    titleEl.textContent = 'Tour complete'
+    titleEl.textContent = 'Briefing complete'
     bodyEl.textContent = ''
     btnAgain.focus()
   }
@@ -1778,11 +2172,13 @@ function mountOrbitalTutorial(root: HTMLElement): void {
 function restart(): void {
   if (phase !== 'space') return
   simulationPaused = false
+  invalidateTelemetryDomSchedule()
   closeImpactModal()
   closeRescueModal()
   magneticWavePulseUntil = 0
   magneticWaveBurstStartAnimT = 0
   clearMagneticWaveShield()
+  clearWaveFeedbackUi()
   spawnAsteroids(logicalW, logicalH)
   lastTs = 0
 }
@@ -1826,6 +2222,7 @@ function respawnOneSlot(num: number): void {
     vy: (dy / len) * baseSpeed,
     r,
     baseSpeed,
+    speedRelax: baseSpeed,
     destructPhase: rand(0, Math.PI * 2),
     fuse: 0,
     lightId: loadPersistedLightId(num),
@@ -1843,26 +2240,83 @@ function readModeCheckboxes(): void {
   magical.falloutMap = !!(document.getElementById('mode-fallout') as HTMLInputElement)?.checked
   magical.chaosVelocity = !!(document.getElementById('mode-chaos') as HTMLInputElement)?.checked
   magical.multiZone = !!(document.getElementById('mode-multizone') as HTMLInputElement)?.checked
+  syncTableColumns()
+  invalidateTelemetryDomSchedule()
 }
 
 function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
+  stopHachalGateTick()
+
+  const syncLockUi = (): void => {
+    let until = readHachalLockoutUntil()
+    if (until > 0 && Date.now() >= until) {
+      try {
+        sessionStorage.removeItem(HACHAL_LOCKOUT_UNTIL_KEY)
+      } catch {
+        /* ignore */
+      }
+      until = 0
+    }
+    const remain = until > 0 ? until - Date.now() : 0
+    const form = root.querySelector<HTMLFormElement>('#hachal-login-form')
+    const input = root.querySelector<HTMLInputElement>('#hachal-password')
+    const submit = root.querySelector<HTMLButtonElement>('.hachal-gate__submit')
+    const lockBanner = root.querySelector<HTMLElement>('#hachal-lockout-banner')
+    const errEl = root.querySelector<HTMLElement>('#hachal-login-error')
+
+    if (remain > 0) {
+      form?.classList.add('hachal-gate__form--locked')
+      if (input) {
+        input.disabled = true
+        input.value = ''
+      }
+      if (submit) submit.disabled = true
+      if (lockBanner) {
+        lockBanner.hidden = false
+        lockBanner.textContent = `Access temporarily locked after ${HACHAL_MAX_ATTEMPTS} failed attempts. Try again in ${formatLockoutRemaining(remain)}.`
+      }
+      if (errEl) errEl.textContent = ''
+    } else {
+      form?.classList.remove('hachal-gate__form--locked')
+      if (input) input.disabled = false
+      if (submit) submit.disabled = false
+      if (lockBanner) {
+        lockBanner.hidden = true
+        lockBanner.textContent = ''
+      }
+    }
+  }
+
   root.innerHTML = `
     <div class="hachal-gate">
       <div class="hachal-gate__panel">
-        <p class="hachal-gate__eyebrow">Restricted · HACHAL</p>
-        <h1 class="hachal-gate__title">HACHAL System</h1>
-        <p class="hachal-gate__sub">Authorized credentials only. Entry is remembered for this browser tab until you sign out or close the tab.</p>
-        <div class="hachal-gate__guide" aria-label="Quick start">
-          <p class="hachal-gate__guide-title">What to do here</p>
+        <p class="hachal-gate__eyebrow">HACHAL · secure access</p>
+        <p class="hachal-gate__session-banner" role="status" aria-live="polite">
+          <span class="hachal-gate__session-dot" aria-hidden="true"></span>
+          No active session in this tab
+        </p>
+        <h1 class="hachal-gate__title">HACHAL orbital console</h1>
+        <p class="hachal-gate__lead">Authenticate to open the mission interface for this browser tab.</p>
+        <p class="hachal-gate__sub">Authorized personnel only. Session persists until you sign out or close the tab. Failed attempts are logged; repeated failures trigger a temporary lockout.</p>
+        <p id="hachal-lockout-banner" class="hachal-gate__lockout" role="alert" aria-live="assertive" hidden></p>
+        <div class="hachal-gate__guide" aria-label="Access sequence">
+          <p class="hachal-gate__guide-title">Access sequence</p>
           <ol class="hachal-gate__guide-list">
-            <li>Type the <strong>access code</strong> you were given.</li>
-            <li>Press <strong>Activate system</strong>.</li>
-            <li>On the next screen, either start the <strong>Tour</strong> (recommended first time) or tap Earth to open the main radar.</li>
+            <li>Enter your <strong>issued access code</strong> (never displayed here).</li>
+            <li>Select <strong>Sign in</strong> to bind a session to this tab.</li>
+            <li>On the next screen, use <strong>Briefing</strong> for a walkthrough, or establish the mission link on the primary display.</li>
           </ol>
-          <p class="hachal-gate__demo">Training / demo code: <code class="hachal-gate__demo-code">${HACHAL_ACCESS_CODE}</code> — change this before any real deployment.</p>
+          <p class="hachal-gate__note">Deploy: optional <span class="hachal-gate__mono">VITE_HACHAL_ACCESS_CODE</span> at build. Browser-visible sources — operational discipline, not classified crypto.</p>
         </div>
         <form class="hachal-gate__form" id="hachal-login-form" autocomplete="off">
-          <label class="hachal-gate__label" for="hachal-password">Access code</label>
+          <div class="hachal-gate__label-row">
+            <label class="hachal-gate__label" for="hachal-password">Access code</label>
+            ${orbitalUxTip(
+              'gate-code',
+              'Help: access code field',
+              'Use the code issued to your organization. It is not displayed on this screen. Several wrong tries can temporarily lock sign-in.',
+            )}
+          </div>
           <input
             id="hachal-password"
             name="hachal-password"
@@ -1871,10 +2325,11 @@ function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
             inputmode="numeric"
             maxlength="32"
             required
-            aria-describedby="hachal-login-error"
+            title="Enter the code you were given; it is not shown on this page."
+            aria-describedby="hachal-login-error hachal-lockout-banner"
           />
           <p id="hachal-login-error" class="hachal-gate__error" role="alert" aria-live="polite"></p>
-          <button type="submit" class="hachal-gate__submit">Activate system</button>
+          <button type="submit" class="hachal-gate__submit">Sign in</button>
         </form>
       </div>
     </div>
@@ -1883,23 +2338,67 @@ function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
   const form = root.querySelector<HTMLFormElement>('#hachal-login-form')
   const input = root.querySelector<HTMLInputElement>('#hachal-password')
   const errEl = root.querySelector<HTMLElement>('#hachal-login-error')
-  input?.focus()
+
+  const maybeStartLockTick = (): void => {
+    stopHachalGateTick()
+    if (readHachalLockoutUntil() > Date.now()) {
+      hachalGateTick = setInterval(() => {
+        syncLockUi()
+        if (readHachalLockoutUntil() <= Date.now()) {
+          stopHachalGateTick()
+          syncLockUi()
+          input?.focus()
+        }
+      }, 1000)
+    }
+  }
+
+  syncLockUi()
+  maybeStartLockTick()
+  if (!input?.disabled) input?.focus()
 
   form?.addEventListener('submit', (e) => {
     e.preventDefault()
+    if (Date.now() < readHachalLockoutUntil()) {
+      syncLockUi()
+      return
+    }
+
     const val = input?.value.trim() ?? ''
-    if (val === HACHAL_ACCESS_CODE) {
+    const expected = getExpectedAccessCode()
+
+    if (val === expected) {
+      clearHachalAuthPenalties()
+      stopHachalGateTick()
       if (errEl) errEl.textContent = ''
+      sessionStorage.setItem(HACHAL_SESSION_KEY, '1')
       onUnlocked()
       return
     }
-    if (errEl) errEl.textContent = 'Invalid access code'
+
+    const fails = readHachalFailCount() + 1
+    writeHachalFailCount(fails)
+    const remaining = HACHAL_MAX_ATTEMPTS - fails
+
+    if (fails >= HACHAL_MAX_ATTEMPTS) {
+      writeHachalLockoutUntil(Date.now() + HACHAL_LOCKOUT_MS)
+      writeHachalFailCount(0)
+      if (errEl) errEl.textContent = ''
+      syncLockUi()
+      maybeStartLockTick()
+      return
+    }
+
+    if (errEl) {
+      errEl.textContent = `Access code incorrect. ${remaining} attempt(s) remaining before a ${formatLockoutRemaining(HACHAL_LOCKOUT_MS)} lockout for this tab.`
+    }
     input?.select()
   })
 }
 
 function mountApplication(root: HTMLElement): void {
   phase = 'intro'
+  introHandoffActive = false
   simulationPaused = false
   lastImpactOverlay = null
   lastCollisionAlertText = ''
@@ -1908,30 +2407,48 @@ function mountApplication(root: HTMLElement): void {
   magneticWaveBurstStartAnimT = 0
   magneticWaveBurstSpanMs = 780
   clearMagneticWaveShield()
-  waveFeedbackText = ''
   waveFeedbackClearAnimT = 0
   asteroids = []
+  lastUtcUiMs = 0
+  invalidateTelemetryDomSchedule()
   cancelAnimationFrame(raf)
 
   root.innerHTML = `
     <div class="orbital-root">
       <div class="orbital-workspace orbital-workspace--intro" id="orbital-workspace">
-        <button type="button" class="orbital-intro-tour-btn" id="orbital-intro-tour-btn" aria-label="Start guided tour">
-          Tour
+        <button type="button" class="orbital-intro-tour-btn" id="orbital-intro-tour-btn" aria-label="Operator briefing (guided tour)">
+          Briefing
         </button>
-        <aside class="orbital-balloon orbital-balloon--hidden" aria-label="Intercept telemetry">
+        <aside class="orbital-balloon orbital-balloon--hidden" aria-label="Mission sidebar: training controls and live lists">
           <div class="orbital-balloon__tail" aria-hidden="true"></div>
           <div class="orbital-balloon__inner">
             <div class="orbital-balloon__header">
-              <span class="orbital-balloon__badge">HACHAL · orbital mission console</span>
+              <div class="orbital-balloon__header-left">
+                <span class="orbital-balloon__badge">HACHAL · orbital mission console</span>
+                <span class="orbital-session-pill" id="orbital-session-status" role="status" title="You are signed in for this browser tab until you log out or close the tab.">
+                  <span class="orbital-session-pill__dot" aria-hidden="true"></span>
+                  Signed in
+                </span>
+              </div>
               <div class="orbital-balloon__header-actions">
-                <button type="button" class="orbital-btn orbital-btn--tour" id="orbital-tour-btn" title="Guided tour">Tour</button>
-                <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart">Restart</button>
-                <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="Sign out">Sign out</button>
+                <button type="button" class="orbital-btn orbital-btn--tour" id="orbital-tour-btn" title="Operator briefing — walkthrough of each panel">Briefing</button>
+                <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart" title="Start a new exercise with fresh paths for all six tracks">Restart</button>
+                <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="End this session and return to the access gate">Log out</button>
               </div>
             </div>
+            <p class="orbital-sidebar-strap" id="orbital-sidebar-strap">
+              This column is your <strong>control deck</strong>: story, pace, safety actions, colors, and the live list next to the radar.
+            </p>
             <section class="orbital-mandate" aria-labelledby="orbital-mandate-title">
-              <h3 class="orbital-mandate__title" id="orbital-mandate-title">Humanity safeguard — program vision</h3>
+              <div class="orbital-zone__head orbital-zone__head--tight">
+                <h3 class="orbital-mandate__title orbital-zone__title--in-mandate" id="orbital-mandate-title">Program vision</h3>
+                ${orbitalUxTip(
+                  'mandate',
+                  'Help: program vision',
+                  'Background on what this training story represents. It is not a feed from real satellites or official alerts.',
+                )}
+              </div>
+              <p class="orbital-zone__lead orbital-zone__lead--mandate">Optional reading about the idea behind this exercise—not live space data.</p>
               <p class="orbital-mandate__tagline">This system connects humanity to the advancement of space.</p>
               <p class="orbital-mandate__body">
                 Shared progress in orbit depends on <strong>open eyes</strong> as much as new rockets: knowing what
@@ -1949,30 +2466,56 @@ function mountApplication(root: HTMLElement): void {
               </p>
             </section>
             <div class="orbital-console-panel orbital-console-panel--sim">
-              <div class="orbital-console-panel__label" aria-hidden="true">Simulation control</div>
+              <div class="orbital-zone__head">
+                <h3 class="orbital-console-panel__heading" id="orbital-sim-controls-title">Training pace</h3>
+                ${orbitalUxTip(
+                  'sim-panel',
+                  'Help: training pace',
+                  'Sim speed changes how fast time runs in the drill. Velocity cap limits how fast objects may move on the radar so you can keep the exercise readable.',
+                )}
+              </div>
+              <p class="orbital-zone__lead" id="orbital-sim-controls-lead">Adjust how fast the exercise runs and how fast tracks are allowed to move.</p>
               <div class="orbital-controls">
               <label class="orbital-control">
                 <span class="orbital-control__label">Sim speed ×</span>
-                <input type="range" id="orbital-sim-scale" min="0.15" max="2" step="0.05" value="1" />
+                <input type="range" id="orbital-sim-scale" min="0.15" max="2" step="0.05" value="1" title="How fast simulated time runs compared to normal. Lower is slower." aria-describedby="orbital-sim-controls-lead" />
                 <span class="orbital-control__value orbital-mono" id="orbital-sim-scale-val">1.00</span>
               </label>
               <label class="orbital-control">
-                <span class="orbital-control__label">Velocity cap</span>
-                <input type="range" id="orbital-vcap" min="55" max="175" step="1" value="130" />
+                <span class="orbital-control__label">Top speed (cap)</span>
+                <input type="range" id="orbital-vcap" min="55" max="175" step="1" value="130" title="Upper limit on how fast tracks may move in the radar view." aria-describedby="orbital-sim-controls-lead" />
                 <span class="orbital-control__value orbital-mono" id="orbital-vcap-val">130</span>
               </label>
               </div>
             </div>
-            <fieldset class="orbital-modes orbital-console-panel orbital-console-panel--modes">
-              <legend>Simulation modifiers <span class="orbital-modes__hint">(training overlays)</span></legend>
-              <label class="orbital-mode"><input type="checkbox" id="mode-precision" /> Precision readout</label>
-              <label class="orbital-mode"><input type="checkbox" id="mode-fallout" /> Fallout map on Earth</label>
-              <label class="orbital-mode"><input type="checkbox" id="mode-chaos" /> Chaos / self-destruct surge</label>
-              <label class="orbital-mode"><input type="checkbox" id="mode-multizone" /> Multi-band fallout</label>
+            <fieldset class="orbital-modes orbital-console-panel orbital-console-panel--modes" aria-describedby="orbital-modes-lead">
+              <legend class="orbital-modes-legend-row">
+                <span>Optional screen overlays</span>
+                ${orbitalUxTip(
+                  'modes-legend',
+                  'Help: optional overlays',
+                  'These toggles add extra visuals or harder behavior. They do not change real-world data—only this training view.',
+                )}
+              </legend>
+              <p class="orbital-zone__lead" id="orbital-modes-lead">Turn on extra detail or stress modes when you want more challenge or clarity.</p>
+              <label class="orbital-mode"><input type="checkbox" id="mode-precision" title="Finer numbers everywhere plus full table: direction, magnetic field, signature." /> Extra decimal places</label>
+              <label class="orbital-mode"><input type="checkbox" id="mode-fallout" title="Shades Earth where simulated impacts would land." /> Impact shading on Earth</label>
+              <label class="orbital-mode"><input type="checkbox" id="mode-chaos" title="Adds unpredictable speed spikes so tracks behave more erratically." /> Random speed surges</label>
+              <label class="orbital-mode"><input type="checkbox" id="mode-multizone" title="After a strike, shows several impact bands instead of one simple zone." /> Layered impact zones</label>
             </fieldset>
             <div class="orbital-status-strip" role="status" aria-live="polite">
               <span class="orbital-status-strip__dot" aria-hidden="true"></span>
-              <p class="orbital-phase" id="orbital-phase">Nominal · six-track field · Earth-centered</p>
+              <div class="orbital-status-strip__body">
+                <div class="orbital-status-strip__head">
+                  <span class="orbital-status-strip__title" id="orbital-status-heading">Mission status</span>
+                  ${orbitalUxTip(
+                    'status-strip',
+                    'Help: mission status',
+                    'One live sentence summarizing what the simulation is doing (all clear, alert, paused, etc.). It updates as time advances.',
+                  )}
+                </div>
+                <p class="orbital-phase" id="orbital-phase" aria-labelledby="orbital-status-heading">Nominal · six-track field · Earth-centered</p>
+              </div>
             </div>
             <section
               id="orbital-earth-defense"
@@ -1980,12 +2523,16 @@ function mountApplication(root: HTMLElement): void {
               role="region"
               aria-labelledby="orbital-earth-defense-heading"
             >
-              <h3 class="orbital-earth-defense__heading" id="orbital-earth-defense-heading">Protect Earth — magnetospheric pulse</h3>
-              <p class="orbital-earth-defense__intro-hint">
-                <strong>What you are looking at</strong> · Six numbered tracks (<strong>Track 1–6</strong>) move on radar.
-                The table calls them <strong>smaller object</strong> or <strong>larger object</strong> by radar size in this demo (not weather meteors).
-                <strong>What to do when it matters</strong> · If a track is heading for Earth inside the short countdown window,
-                the <span class="orbital-mono">L1–L3</span> buttons <strong>unlock</strong>. Tap one to try a deflection in this training sim; success opens a short report.
+              <div class="orbital-zone__head orbital-zone__head--earth">
+                <h3 class="orbital-earth-defense__heading" id="orbital-earth-defense-heading">Protect Earth</h3>
+                ${orbitalUxTip(
+                  'earth-defense',
+                  'Help: Protect Earth',
+                  'Six tracks (Track 1–6) move on radar; the table labels each as a smaller or larger object by size in this demo. When one is on a collision course inside the short countdown, L1–L3 unlock—tap a level to try a training pulse. In the simulation, the pulse nudges the path sideways while keeping speed the same.',
+                )}
+              </div>
+              <p class="orbital-zone__lead orbital-earth-defense__intro-hint">
+                When a track is heading for Earth inside the alert window, the pulse buttons unlock. Each tap shows <strong>what is happening</strong> under the buttons, then <strong>success</strong> (report) or <strong>not cleared</strong> with what to try next.
               </p>
               <div
                 id="orbital-earth-defense-status"
@@ -1994,89 +2541,78 @@ function mountApplication(root: HTMLElement): void {
                 aria-live="polite"
               ></div>
               <p class="orbital-collision-alert__pulse-hint">
-                Magnetospheric pulse — in-plane velocity rotation toward Earth limb; preserves speed magnitude (simulation).
+                <span class="orbital-pulse-hint__text">Pulse strength: gentle (L1) to strong (L3)—stronger pushes cost more margin in this training model.</span>
+                ${orbitalUxTip(
+                  'pulse-tech',
+                  'Help: what the pulse does',
+                  'Technical detail: the sim rotates in-plane velocity toward Earth’s limb so speed magnitude stays the same—useful fiction for practicing timing, not a real weapon model.',
+                )}
               </p>
-              <div class="orbital-collision-alert__actions" role="group" aria-label="Protect Earth — magnetic pulse level">
-                <button type="button" class="orbital-wave-btn" data-wave-level="1" disabled>
-                  Protect · <span class="orbital-mono">L1</span><span class="orbital-wave-btn__sub">low pulse</span>
+              <div class="orbital-collision-alert__actions" role="group" aria-label="Protect Earth — choose pulse strength">
+                <button type="button" class="orbital-wave-btn" data-wave-level="1" disabled title="Smallest training push—good when you want a light nudge.">
+                  Protect · <span class="orbital-mono">L1</span><span class="orbital-wave-btn__sub">gentle</span>
                 </button>
-                <button type="button" class="orbital-wave-btn" data-wave-level="2" disabled>
-                  Protect · <span class="orbital-mono">L2</span><span class="orbital-wave-btn__sub">medium pulse</span>
+                <button type="button" class="orbital-wave-btn" data-wave-level="2" disabled title="Medium training push—balanced deflection in this exercise.">
+                  Protect · <span class="orbital-mono">L2</span><span class="orbital-wave-btn__sub">medium</span>
                 </button>
-                <button type="button" class="orbital-wave-btn orbital-wave-btn--max" data-wave-level="3" disabled>
-                  Protect · <span class="orbital-mono">L3</span><span class="orbital-wave-btn__sub">maximum deflection</span>
+                <button type="button" class="orbital-wave-btn orbital-wave-btn--max" data-wave-level="3" disabled title="Strongest training push—biggest path change when unlocked.">
+                  Protect · <span class="orbital-mono">L3</span><span class="orbital-wave-btn__sub">strong</span>
                 </button>
               </div>
-              <p id="orbital-wave-feedback" class="orbital-wave-feedback" aria-live="polite"></p>
+              <div id="orbital-wave-feedback" class="orbital-wave-feedback" role="region" aria-label="Pulse feedback" aria-live="polite"></div>
             </section>
-            <p class="orbital-fleet__legend">Track display light · radar blip, corridor line, table marker</p>
-            <div class="orbital-fleet" id="orbital-fleet" aria-label="Fleet status and per-track lights"></div>
-            <section class="orbital-data-sheet orbital-data-sheet--s3" aria-labelledby="orbital-sheet-title">
+            <section class="orbital-fleet-block" aria-labelledby="orbital-fleet-heading">
+              <div class="orbital-zone__head orbital-zone__head--tight">
+                <h3 class="orbital-fleet-block__title" id="orbital-fleet-heading">Track colors</h3>
+                ${orbitalUxTip(
+                  'fleet-colors',
+                  'Help: track colors',
+                  'Each track uses one color for the radar dot, the line toward Earth, and the small marker in the table. Swatches apply for this browser tab until you log out or close it.',
+                )}
+              </div>
+              <p class="orbital-zone__lead">Pick a color per track so dots, lines, and the table stay easy to match.</p>
+              <p class="orbital-fleet__legend">Dot · line toward Earth · table square</p>
+              <div class="orbital-fleet" id="orbital-fleet" aria-label="Per-track colors and quick stats"></div>
+            </section>
+            <section class="orbital-data-sheet orbital-data-sheet--s3" id="orbital-data-sheet" aria-labelledby="orbital-sheet-title">
               <div class="orbital-data-sheet__ribbon" aria-hidden="true"></div>
               <header class="orbital-data-sheet__head">
                 <div class="orbital-data-sheet__head-top">
                   <h2 class="orbital-data-sheet__title" id="orbital-sheet-title">
-                    NEO corridor occupancy — live
+                    Objects near Earth
                   </h2>
-                  <span class="orbital-data-sheet__stamp" title="Live telemetry refresh">LIVE · REFRESH</span>
+                  <span class="orbital-data-sheet__stamp" title="List refreshes while the simulation runs">Live</span>
                 </div>
-                <p class="orbital-data-sheet__subtitle">
-                  Earth-fixed gate · geocentric inertial (GCRS) · 2-D radar-plane projection
-                </p>
+                <div class="orbital-data-sheet__title-row">
+                  <p class="orbital-data-sheet__subtitle">
+                    Watch zone around Earth — speed and status first; turn on <strong>Extra decimal places</strong> for full columns.
+                  </p>
+                  ${orbitalUxTip(
+                    'sheet-sub',
+                    'Help: this table',
+                    'Default: track, size, speed, simple status. Optional “Extra decimal places” adds direction, magnetic field, and signature — training data only.',
+                  )}
+                </div>
                 <div class="orbital-data-sheet__meta">
                   <time id="orbital-sheet-utc" class="orbital-data-sheet__utc orbital-mono" datetime=""
                     >— UTC</time
                   >
-                  <span class="orbital-data-sheet__sep" aria-hidden="true">|</span>
-                  <span class="orbital-data-sheet__frame">Units: SI · angles deg · ρ in AU</span>
                 </div>
               </header>
-              <div class="orbital-table-wrap">
+              <div class="orbital-table-wrap" id="orbital-table-wrap">
                 <table
-                  class="orbital-table orbital-table--assessment"
+                  class="orbital-table orbital-table--assessment orbital-table--compact"
                   aria-live="polite"
-                  aria-describedby="orbital-sheet-title orbital-sheet-foot"
+                  aria-describedby="orbital-sheet-title orbital-sheet-foot orbital-table-caption"
                 >
-                  <caption class="orbital-sr-only">
-                    Six training tracks around Earth. Columns: track number and sim label, smaller or larger object by radar size,
-                    speed, corridor geometry, magnetic field along path, and EM–velocity signature. All values are simulated for training.
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col" class="orbital-th">
-                        <span class="orbital-th__main">Track</span>
-                        <span class="orbital-th__sub">number · sim label</span>
-                      </th>
-                      <th scope="col" class="orbital-th">
-                        <span class="orbital-th__main">Size (sim)</span>
-                        <span class="orbital-th__sub">smaller / larger · Ø<sub>est</sub> (m)</span>
-                      </th>
-                      <th scope="col" class="orbital-th orbital-th--numeric">
-                        <abbr class="orbital-th__main" title="Speed magnitude">|v|</abbr>
-                        <span class="orbital-th__sub">km · s<sup>−1</sup> <span class="orbital-th__hint">(ISO 80000-3)</span></span>
-                      </th>
-                      <th scope="col" class="orbital-th">
-                        <abbr class="orbital-th__main" title="Corridor geometry in the display plane">Corridor LOS</abbr>
-                        <span class="orbital-th__sub">ψ azimuth · ρ range (AU)</span>
-                      </th>
-                      <th scope="col" class="orbital-th orbital-th--numeric">
-                        <abbr class="orbital-th__main" title="Magnetic field magnitude along path">|B|</abbr>
-                        <span class="orbital-th__sub">nT · dipole + bias</span>
-                      </th>
-                      <th scope="col" class="orbital-th orbital-th--sig">
-                        <abbr class="orbital-th__main" title="Magnetic magnitude and speed composite key">EM–V ID</abbr>
-                        <span class="orbital-th__sub">|B| (nT) · |v| (km/s)</span>
-                      </th>
-                    </tr>
-                  </thead>
+                  <caption class="orbital-sr-only" id="orbital-table-caption"></caption>
+                  <thead id="orbital-thead"></thead>
                   <tbody id="orbital-tbody"></tbody>
                   <tfoot>
                     <tr class="orbital-table__foot">
-                      <td colspan="6" id="orbital-sheet-foot">
+                      <td colspan="4" id="orbital-sheet-foot">
                         <span class="orbital-table__foot-line"
-                          ><strong>Disclaimer</strong> · Synthetic corridor filter and intercept timing in the display
-                          plane only. Pulse deflection and reports are training aids — not operational TCA, miss distance,
-                          or public alert.</span
+                          ><strong>Training only</strong> · Not real alerts or operational data. Pulse and reports are for practice.</span
                         >
                       </td>
                     </tr>
@@ -2087,21 +2623,25 @@ function mountApplication(root: HTMLElement): void {
           </div>
         </aside>
         <div class="orbital-radar-panel">
-          <div class="orbital-radar-bezel" id="orbital-radar-bezel">
-            <span class="orbital-radar-label" aria-hidden="true">RADAR</span>
-            <canvas class="orbital-canvas" aria-label="Radar scope"></canvas>
+          <div class="orbital-radar-stack">
+            <div class="orbital-radar-bezel" id="orbital-radar-bezel">
+              <span class="orbital-radar-label" aria-hidden="true">RADAR</span>
+              <canvas class="orbital-canvas" aria-label="HACHAL primary display: Earth-centered standby. Touch Earth or press Enter or Space to establish mission link and load the console."></canvas>
+            </div>
+            <p class="orbital-radar-caption">You are looking at the <strong>main radar</strong>: Earth and six practice tracks; the side column holds controls and the live list.</p>
           </div>
-          <div class="orbital-intro-cta" id="orbital-intro-cta" role="region" aria-label="How to continue">
-            <p class="orbital-intro-cta__eyebrow">Step 1 of 2</p>
-            <p class="orbital-intro-cta__title">Tap Earth — or press Space / Enter</p>
-            <p class="orbital-intro-cta__body">This opens the full console: <strong>six moving tracks</strong> (Track 1–6), controls on the side, and <strong>Protect Earth</strong> buttons when a collision is imminent.</p>
-            <p class="orbital-intro-cta__tour-hint">New here? Tap <strong>Tour</strong> (top-left) <em>before</em> or <em>after</em> you enter — it explains each panel in plain language.</p>
+          <div class="orbital-intro-cta" id="orbital-intro-cta" role="region" aria-label="Establish mission link" title="Handshake into mission console">
+            <p class="orbital-intro-cta__eyebrow">HACHAL · primary display</p>
+            <p class="orbital-intro-cta__title">Establish mission link</p>
+            <p class="orbital-intro-cta__body">Handshake loads the operational layout: <strong>six correlated tracks</strong> (Track 1–6), <strong>mission sidebar</strong> (pace, Protect Earth, live list), and <strong>radar</strong> as the main sensor plane.</p>
+            <p class="orbital-intro-cta__tour-hint">First time? Corner <strong>Briefing</strong> walks each panel — or link in when you are ready.</p>
           </div>
         </div>
       </div>
       <div id="orbital-impact-modal" class="orbital-modal orbital-modal--hidden" role="dialog" aria-modal="true" aria-labelledby="orbital-impact-title">
         <div class="orbital-modal__panel">
           <h2 id="orbital-impact-title" class="orbital-modal__title">Surface impact</h2>
+          <p class="orbital-modal__strap">In this training run, an object reached the ground—details below are simulated, not a real alert.</p>
           <p class="orbital-modal__body" id="orbital-impact-summary"></p>
           <div id="orbital-fallout-list"></div>
           <div class="orbital-modal__actions">
@@ -2112,7 +2652,8 @@ function mountApplication(root: HTMLElement): void {
       </div>
       <div id="orbital-rescue-modal" class="orbital-modal orbital-modal--hidden" role="dialog" aria-modal="true" aria-labelledby="orbital-rescue-title">
         <div class="orbital-modal__panel orbital-modal__panel--rescue">
-          <h2 id="orbital-rescue-title" class="orbital-modal__title orbital-modal__title--rescue">Deflection intercept report</h2>
+          <h2 id="orbital-rescue-title" class="orbital-modal__title orbital-modal__title--rescue">Deflection report</h2>
+          <p class="orbital-modal__strap">Your training pulse changed the path; the numbers below are for this exercise only.</p>
           <div id="orbital-rescue-report-body" class="orbital-rescue-report-body"></div>
           <div class="orbital-modal__actions">
             <button type="button" class="orbital-btn orbital-btn--primary" id="orbital-rescue-dismiss">Acknowledge · resume surveillance</button>
@@ -2152,6 +2693,7 @@ function mountApplication(root: HTMLElement): void {
   simEl?.addEventListener('input', () => {
     simTimeScale = Number(simEl.value)
     if (simVal) simVal.textContent = simTimeScale.toFixed(2)
+    invalidateTelemetryDomSchedule()
   })
 
   const vcapEl = root.querySelector<HTMLInputElement>('#orbital-vcap')
@@ -2159,6 +2701,7 @@ function mountApplication(root: HTMLElement): void {
   vcapEl?.addEventListener('input', () => {
     velocityCapPx = Number(vcapEl.value)
     if (vcapVal) vcapVal.textContent = String(Math.round(velocityCapPx))
+    invalidateTelemetryDomSchedule()
   })
 
   for (const id of ['mode-precision', 'mode-fallout', 'mode-chaos', 'mode-multizone']) {
@@ -2169,6 +2712,7 @@ function mountApplication(root: HTMLElement): void {
     const n = lastImpactOverlay?.num
     closeImpactModal()
     simulationPaused = false
+    invalidateTelemetryDomSchedule()
     if (n !== undefined) respawnOneSlot(n)
     lastImpactOverlay = null
   })
@@ -2181,6 +2725,7 @@ function mountApplication(root: HTMLElement): void {
   document.getElementById('orbital-rescue-dismiss')?.addEventListener('click', () => {
     closeRescueModal()
     simulationPaused = false
+    invalidateTelemetryDomSchedule()
   })
 
   canvas.addEventListener('click', () => {
@@ -2197,6 +2742,8 @@ function mountApplication(root: HTMLElement): void {
   const ro = new ResizeObserver(() => resize())
   ro.observe(root.querySelector('.orbital-radar-bezel') ?? root)
   resize()
+
+  readModeCheckboxes()
 
   lastTs = 0
   cancelAnimationFrame(raf)
@@ -2217,7 +2764,6 @@ function mount(root: HTMLElement): void {
   }
 
   showHachalGate(root, () => {
-    sessionStorage.setItem(HACHAL_SESSION_KEY, '1')
     mountApplication(root)
   })
 }
