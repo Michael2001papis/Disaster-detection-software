@@ -1,7 +1,7 @@
 /**
  * Earth intro → split radar UI. Six numbered asteroids, speed limiter + per-body speeds,
  * self-destruct-style variable velocity, surface impact modal, fallout zones, combinable modes.
- * Each track gets a random provisional designation; designations are unique per browser and never reused.
+ * Each track is numbered Track 1–6 on screen; an extra sim label (e.g. 2026-AB12) is unique per browser when storage works.
  */
 
 const HACHAL_SESSION_KEY = 'hachal-system-session'
@@ -169,7 +169,8 @@ interface Asteroid {
 }
 
 interface ThreatRow {
-  label: string
+  trackLine: string
+  simRefLine: string
   speedKmS: number
   collisionLabel: string
   magneticNT: number
@@ -483,8 +484,9 @@ function formatEmVelSignature(BnT: number, vKmS: number): string {
   return `M${BnT.toFixed(bDec)}·V${vKmS.toFixed(vDec)}`
 }
 
+/** User-facing size band — avoids “meteorite” confusion (atmospheric vs radar-small). */
 function formatBodyClassLabel(c: 'MET' | 'AST'): string {
-  return c === 'MET' ? 'Meteorite' : 'Asteroid'
+  return c === 'MET' ? 'Smaller object' : 'Larger object'
 }
 
 /** Corridor gate radius in display plane (Earth + body + margin). */
@@ -638,7 +640,8 @@ function analyzeThreat(a: Asteroid, ex: number, ey: number, timeMs: number): Thr
   const emVelSignature = formatEmVelSignature(magneticNT, speedKmS)
 
   return {
-    label: `#${a.num} · ${a.name}`,
+    trackLine: `Track ${a.num}`,
+    simRefLine: `Sim label · ${a.name}`,
     speedKmS,
     collisionLabel,
     magneticNT,
@@ -710,7 +713,9 @@ function openImpactModal(snapshot: ImpactSnapshot): void {
   const prec = magical.precision ? 4 : 2
   const cls = formatBodyClassLabel(snapshot.bodyClass)
   text.innerHTML = `
-    <strong>#${snapshot.num} ${escapeHtml(snapshot.name)}</strong> (${cls}, estimated Ø <span class="orbital-mono">${snapshot.equivDiameterM}</span> m,
+    <strong>Track ${snapshot.num}</strong>
+    <span class="orbital-mono">(${escapeHtml(snapshot.name)})</span>
+    — ${cls}, estimated Ø <span class="orbital-mono">${snapshot.equivDiameterM}</span> m,
     EM–V ID <span class="orbital-mono">${escapeHtml(snapshot.emVelSignature)}</span>) reached the surface at
     <span class="orbital-mono">${escapeHtml(snapshot.latStr)}</span>,
     <span class="orbital-mono">${escapeHtml(snapshot.lonStr)}</span>
@@ -750,7 +755,7 @@ function openRescueModal(r: RescueReport): void {
   body.innerHTML = `
     <dl class="orbital-rescue-dl">
       <dt>Report time (UTC)</dt><dd class="orbital-mono">${escapeHtml(utcDisp)}</dd>
-      <dt>Track</dt><dd class="orbital-mono">#${r.num} ${escapeHtml(r.name)}</dd>
+      <dt>Track</dt><dd><strong>Track ${r.num}</strong> · sim label <span class="orbital-mono">${escapeHtml(r.name)}</span></dd>
       <dt>Class</dt><dd>${cls} · Ø<sub>est</sub> <span class="orbital-mono">${r.equivDiameterM}</span> m</dd>
       <dt>Magnetospheric pulse</dt><dd>${escapeHtml(lvlLabel)}</dd>
       <dt>TTI before pulse</dt><dd class="orbital-mono">≈${r.ttiBeforeWallS.toFixed(magical.precision ? 2 : 1)} s (wall, at sim×)</dd>
@@ -828,7 +833,7 @@ function deployMagneticWave(level: 1 | 2 | 3): void {
     magneticWaveBurstSpanMs = 780
     magneticWavePulseUntil = lastFrameAnimT + magneticWaveBurstSpanMs
     magneticWaveShieldTrackNum = a.num
-    waveFeedbackText = `Pulse L${level} applied — track still inside intercept window. Use a stronger pulse (L3 = best).`
+    waveFeedbackText = `Pulse L${level} applied — Track ${a.num} still inside intercept window. Try a stronger pulse (L3 = best).`
     waveFeedbackClearAnimT = lastFrameAnimT + 5000
     if (fb) fb.textContent = waveFeedbackText
   }
@@ -983,7 +988,7 @@ function drawAsteroid(a: Asteroid, spacePhase: boolean): void {
   ctx.fillStyle = L.badgeBg
   ctx.strokeStyle = L.badgeStroke
   ctx.lineWidth = 1
-  const label = String(a.num)
+  const label = `T${a.num}`
   ctx.font = 'bold 11px ui-monospace, monospace'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -1194,15 +1199,18 @@ function updateTable(threats: ThreatRow[], animT: number): void {
       .map(
         (t) => `
       <tr class="orbital-table__row${t.speedKmS >= 4.85 ? ' orbital-table__row--hot' : ''}">
-        <td class="orbital-table__cell orbital-table__cell--designator orbital-mono" data-label="OBJ-ID">
+        <td class="orbital-table__cell orbital-table__cell--designator" data-label="Track">
           <span class="orbital-table__stack-value orbital-table__cell--with-light">
             <span class="orbital-table-light" style="background:${escapeHtml(getTrackLight(t.lightId).fill)}" title="Track display light" aria-hidden="true"></span>
-            <span class="orbital-table__designator-text">${escapeHtml(t.label)}</span>
+            <span class="orbital-table__designator-text">
+              <span class="orbital-table__designator-main">${escapeHtml(t.trackLine)}</span>
+              <span class="orbital-table__designator-sub orbital-mono">${escapeHtml(t.simRefLine)}</span>
+            </span>
           </span>
         </td>
-        <td class="orbital-table__cell orbital-table__cell--class" data-label="Class / Ø">
+        <td class="orbital-table__cell orbital-table__cell--class" data-label="Size (sim)">
           <span class="orbital-table__stack-value">
-            <span class="orbital-table__class-main">${t.bodyClass === 'MET' ? 'Meteorite' : 'Asteroid'}</span>
+            <span class="orbital-table__class-main">${t.bodyClass === 'MET' ? 'Smaller object' : 'Larger object'}</span>
             <span class="orbital-table__class-sub orbital-mono">Ø<sub>est</sub> ${t.equivDiameterM} m</span>
           </span>
         </td>
@@ -1284,7 +1292,7 @@ function updateCollisionAlertBanner(animT: number): void {
     el.classList.add('orbital-earth-defense--standby')
     setWaveButtonsDisabled(true)
     lastCollisionAlertText = ''
-    const standbyHtml = `<span class="orbital-earth-defense__standby-label">Intercept status</span> · No meteorite or asteroid on an <strong>Earth collision</strong> trajectory inside the alert window (<span class="orbital-mono">≈${COLLISION_ALERT_TTI_MAX_S} s</span> sim time, wall clock at current sim×). <strong>Detection</strong>: six MET/AST tracks on radar; <strong>NEO corridor table</strong> lists objects crossing the operational gate (class, speed, |B|, EM–V). Pulse banks stand by — they <strong>arm automatically</strong> when the window above is breached.`
+    const standbyHtml = `<span class="orbital-earth-defense__standby-label">Intercept status</span> · <strong>All clear</strong> — no track is on an Earth-collision path inside the alert window (about <span class="orbital-mono">${COLLISION_ALERT_TTI_MAX_S} s</span> simulated time, using wall clock at your current sim speed). You always have <strong>six numbered tracks</strong> on radar (<strong>Track 1–6</strong>); the table shows <strong>smaller vs larger</strong> objects by radar size. When a collision gets close in time, the <strong>L1 / L2 / L3</strong> buttons <strong>unlock automatically</strong> — tap one to try a deflection in this training sim.`
     if (standbyHtml !== lastEarthDefenseStandbyHtml) {
       textEl.innerHTML = standbyHtml
       lastEarthDefenseStandbyHtml = standbyHtml
@@ -1305,7 +1313,7 @@ function updateCollisionAlertBanner(animT: number): void {
   const dM = equivDiameterMFromRadarR(best.a.r)
   const ttiStr = best.tti.toFixed(magical.precision ? 2 : 1)
   const bPrec = magical.precision ? 2 : 1
-  const html = `<span class="orbital-collision-alert__label">Earth collision — deploy pulse</span> · Track <span class="orbital-mono">#${best.a.num}</span> <span class="orbital-mono">${escapeHtml(best.a.name)}</span> · ${cls} · Ø<sub>est</sub> <span class="orbital-mono">${dM}</span> m · TTI <span class="orbital-mono">≈${ttiStr}</span> s (wall, at current sim×) · <span class="orbital-mono">|v| ${formatSpeed(best.speedKmS)} km/s</span> · <span class="orbital-mono">|B| ${best.magneticNT.toFixed(bPrec)} nT</span> · EM–V ID <span class="orbital-mono">${escapeHtml(sig)}</span> · Use <strong>L1–L3</strong> below to deflect.`
+  const html = `<span class="orbital-collision-alert__label">Earth collision — deploy pulse</span> · <strong>Track ${best.a.num}</strong> <span class="orbital-mono">(${escapeHtml(best.a.name)})</span> · ${cls} · Ø<sub>est</sub> <span class="orbital-mono">${dM}</span> m · TTI <span class="orbital-mono">≈${ttiStr}</span> s (wall, at current sim×) · <span class="orbital-mono">|v| ${formatSpeed(best.speedKmS)} km/s</span> · <span class="orbital-mono">|B| ${best.magneticNT.toFixed(bPrec)} nT</span> · EM–V ID <span class="orbital-mono">${escapeHtml(sig)}</span> · Tap <strong>L1–L3</strong> below to deflect.`
 
   if (html !== lastCollisionAlertText) {
     textEl.innerHTML = html
@@ -1320,7 +1328,7 @@ function updateFleetReadout(animT: number): void {
     const fuseP = (a.fuse * 100).toFixed(magical.precision ? 1 : 0)
     const Bnow = magneticAlongPath(a.x, a.y, earthX, earthY, animT, a.magneticBiasNT)
     const sig = formatEmVelSignature(Bnow, kms)
-    const cls = a.bodyClass === 'MET' ? 'MET' : 'AST'
+    const sizeBand = a.bodyClass === 'MET' ? 'Smaller' : 'Larger'
     const diam = equivDiameterMFromRadarR(a.r)
     const swatches = TRACK_LIGHT_PRESETS.map((p) => {
       const active = a.lightId === p.id
@@ -1331,12 +1339,12 @@ function updateFleetReadout(animT: number): void {
         ${swatches}
       </div>
       <div class="orbital-fleet__metrics">
-        <span class="orbital-mono">#${a.num}</span>
-        <span class="orbital-fleet__name">${escapeHtml(a.name)}</span>
+        <span class="orbital-fleet__track-label"><strong>Track ${a.num}</strong></span>
+        <span class="orbital-fleet__name orbital-mono" title="Internal sim label">${escapeHtml(a.name)}</span>
         <span class="orbital-mono">${formatSpeed(kms)} km/s</span>
         <span class="orbital-mono">fuse ${fuseP}%</span>
       </div>
-      <div class="orbital-fleet__telemetry orbital-mono" aria-label="Class, estimated diameter, EM–velocity signature">${cls} · Ø~${diam} m · ${escapeHtml(sig)}</div>
+      <div class="orbital-fleet__telemetry orbital-mono" aria-label="Size band, estimated diameter, EM–velocity signature">${sizeBand} · Ø~${diam} m · ${escapeHtml(sig)}</div>
     </div>`
   })
   fleetEl.innerHTML = lines.join('')
@@ -1439,10 +1447,25 @@ function step(ts: number): void {
 }
 
 function resize(): void {
+  const prevW = logicalW
+  const prevH = logicalH
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
   const rect = canvas.getBoundingClientRect()
   const w = Math.max(320, rect.width)
   const h = Math.max(400, rect.height)
+
+  // Keep tracks visually consistent when the radar is resized (avoids sudden jumps vs Earth).
+  if (phase === 'space' && prevW > 0 && prevH > 0 && asteroids.length > 0) {
+    const sx = w / prevW
+    const sy = h / prevH
+    for (const a of asteroids) {
+      a.x *= sx
+      a.y *= sy
+      a.vx *= sx
+      a.vy *= sy
+    }
+  }
+
   logicalW = w
   logicalH = h
   canvas.width = w * dpr
@@ -1463,6 +1486,7 @@ function goSpace(): void {
   appMountEl?.classList.add('orbital-app--space')
   document.getElementById('orbital-workspace')?.classList.remove('orbital-workspace--intro')
   document.getElementById('orbital-workspace')?.classList.add('orbital-workspace--split')
+  document.getElementById('orbital-intro-cta')?.classList.add('orbital-intro-cta--hidden')
   resize()
   spawnAsteroids(logicalW, logicalH)
   if (phaseLine) phaseLine.textContent = 'Nominal · six-track field · Earth-centered'
@@ -1513,24 +1537,24 @@ type OrbitalTutorialStep = {
 
 const ORBITAL_TUTORIAL_STEPS: readonly OrbitalTutorialStep[] = [
   {
-    title: 'Welcome to the orbital mission console',
-    body: 'This is a training shell for Earth-centered near-Earth object awareness: radar tracks, corridor telemetry, and simulated protect-Earth pulses. Use the arrows below to move through the tour.',
+    title: 'Welcome — what is this?',
+    body: 'This is a training demo in your browser: a radar view of Earth, six moving tracks, and pretend “Protect Earth” pulses. Nothing here connects to real satellites or official alerts. Use Next to walk through the screen, or Skip tour if you prefer to explore alone.',
     targetSelector: null,
   },
   {
-    title: 'Earth-centered radar (intro)',
-    body: 'The large scope is the geocentric radar plane. You will command six provisional meteorite and asteroid tracks once you enter the mission field.',
+    title: 'The big radar circle',
+    body: 'Earth is in the middle. After you continue, you will see six dots moving inward — those are Track 1 through Track 6. Each track also has a small sim label (like a reference code); you can ignore it unless you need to match the table.',
     targetSelector: '#orbital-radar-bezel',
   },
   {
-    title: 'Enter the mission field',
-    body: 'Tap the radar, or press Enter or Space, to leave the intro and open the full console — radar beside controls, fleet, and the live NEO corridor table. You can also use the button below.',
+    title: 'Open the main console',
+    body: 'Tap Earth (or press Enter or Space) to leave this intro. Then the radar moves beside the control panels, the Fleet list, and the live table. You can also use Enter mission below.',
     targetSelector: '#orbital-radar-bezel',
     primaryEnterMission: true,
   },
   {
-    title: 'Console header',
-    body: 'Tour reopens this guide anytime. Restart respawns all tracks. Sign out clears this browser tab’s session and returns to the access gate.',
+    title: 'Top buttons',
+    body: 'Tour — opens this guide again. Restart — new random paths for all six tracks. Sign out — locks the console and sends you back to the access code screen.',
     targetSelector: '.orbital-balloon__header-actions',
   },
   {
@@ -1564,8 +1588,8 @@ const ORBITAL_TUTORIAL_STEPS: readonly OrbitalTutorialStep[] = [
     targetSelector: '#orbital-fleet',
   },
   {
-    title: 'NEO corridor occupancy table',
-    body: 'Lists objects crossing the operational gate: designation, class and size, speed, corridor geometry, |B| along path, and EM–V signature. On narrow screens the same fields stack as cards.',
+    title: 'The live table',
+    body: 'Lists tracks that cross the “gate” around Earth: track number, a sim label, smaller vs larger object (by radar size in this demo), speed, and other training fields. On a phone, each row becomes an easy-to-read card.',
     targetSelector: '.orbital-data-sheet',
   },
   {
@@ -1808,8 +1832,10 @@ function respawnOneSlot(num: number): void {
     bodyClass,
     magneticBiasNT,
   }
-  asteroids.push(neo)
-  asteroids.sort((a, b) => a.num - b.num)
+  const without = asteroids.filter((x) => x.num !== num)
+  without.push(neo)
+  without.sort((a, b) => a.num - b.num)
+  asteroids = without
 }
 
 function readModeCheckboxes(): void {
@@ -1825,7 +1851,16 @@ function showHachalGate(root: HTMLElement, onUnlocked: () => void): void {
       <div class="hachal-gate__panel">
         <p class="hachal-gate__eyebrow">Restricted · HACHAL</p>
         <h1 class="hachal-gate__title">HACHAL System</h1>
-        <p class="hachal-gate__sub">Authorized credentials only. Entry is logged to this session.</p>
+        <p class="hachal-gate__sub">Authorized credentials only. Entry is remembered for this browser tab until you sign out or close the tab.</p>
+        <div class="hachal-gate__guide" aria-label="Quick start">
+          <p class="hachal-gate__guide-title">What to do here</p>
+          <ol class="hachal-gate__guide-list">
+            <li>Type the <strong>access code</strong> you were given.</li>
+            <li>Press <strong>Activate system</strong>.</li>
+            <li>On the next screen, either start the <strong>Tour</strong> (recommended first time) or tap Earth to open the main radar.</li>
+          </ol>
+          <p class="hachal-gate__demo">Training / demo code: <code class="hachal-gate__demo-code">${HACHAL_ACCESS_CODE}</code> — change this before any real deployment.</p>
+        </div>
         <form class="hachal-gate__form" id="hachal-login-form" autocomplete="off">
           <label class="hachal-gate__label" for="hachal-password">Access code</label>
           <input
@@ -1904,8 +1939,8 @@ function mountApplication(root: HTMLElement): void {
                 future among the planets. A future operational stack would fuse <strong>global NEO surveys</strong>,
                 <strong>precision orbit determination</strong>, and <strong>deflection physics</strong> (kinetic
                 impact, gravity tractor, ion beams, or coordinated pulses) into one timeline: detect early →
-                characterize threat → choose response → verify miss distance. Meteorites and asteroids are the same
-                hazard class at different scales; the goal is <strong>days to decades</strong> of warning and a
+                characterize threat → choose response → verify miss distance.
+                Near-Earth objects span many sizes; the goal is <strong>days to decades</strong> of warning and a
                 rehearsed chain of command.
               </p>
               <p class="orbital-mandate__foot">
@@ -1947,11 +1982,10 @@ function mountApplication(root: HTMLElement): void {
             >
               <h3 class="orbital-earth-defense__heading" id="orbital-earth-defense-heading">Protect Earth — magnetospheric pulse</h3>
               <p class="orbital-earth-defense__intro-hint">
-                <strong>Detection</strong> · Six provisional tracks on radar (meteorite MET vs asteroid AST by estimated size).
-                The <strong>NEO corridor occupancy</strong> table lists any object crossing the Earth-fixed gate with speed,
-                magnetic path |B|, and EM–V signature. <strong>Defense</strong> · When an impact with Earth is inside the
-                time-to-intercept alert window, pulse buttons below <strong>unlock</strong> — fire <span class="orbital-mono">L1→L3</span>
-                (strongest) to deflect in this training simulation; success opens an intercept report.
+                <strong>What you are looking at</strong> · Six numbered tracks (<strong>Track 1–6</strong>) move on radar.
+                The table calls them <strong>smaller object</strong> or <strong>larger object</strong> by radar size in this demo (not weather meteors).
+                <strong>What to do when it matters</strong> · If a track is heading for Earth inside the short countdown window,
+                the <span class="orbital-mono">L1–L3</span> buttons <strong>unlock</strong>. Tap one to try a deflection in this training sim; success opens a short report.
               </p>
               <div
                 id="orbital-earth-defense-status"
@@ -2004,20 +2038,18 @@ function mountApplication(root: HTMLElement): void {
                   aria-describedby="orbital-sheet-title orbital-sheet-foot"
                 >
                   <caption class="orbital-sr-only">
-                    Near-Earth object tracks whose forward trajectories intersect the operational resistance corridor
-                    about Earth. Columns: object identifier, meteorite or asteroid class with estimated diameter, speed
-                    magnitude, corridor line-of-sight geometry, magnetic-field magnitude along the Earth–object path, and
-                    a composite EM–velocity signature. Values are simulation outputs for operator training.
+                    Six training tracks around Earth. Columns: track number and sim label, smaller or larger object by radar size,
+                    speed, corridor geometry, magnetic field along path, and EM–velocity signature. All values are simulated for training.
                   </caption>
                   <thead>
                     <tr>
                       <th scope="col" class="orbital-th">
-                        <abbr class="orbital-th__main" title="Object identifier">OBJ-ID</abbr>
-                        <span class="orbital-th__sub">track · provisional designation</span>
+                        <span class="orbital-th__main">Track</span>
+                        <span class="orbital-th__sub">number · sim label</span>
                       </th>
                       <th scope="col" class="orbital-th">
-                        <abbr class="orbital-th__main" title="Meteorite vs asteroid and estimated diameter">Class</abbr>
-                        <span class="orbital-th__sub">body · Ø<sub>est</sub> (m)</span>
+                        <span class="orbital-th__main">Size (sim)</span>
+                        <span class="orbital-th__sub">smaller / larger · Ø<sub>est</sub> (m)</span>
                       </th>
                       <th scope="col" class="orbital-th orbital-th--numeric">
                         <abbr class="orbital-th__main" title="Speed magnitude">|v|</abbr>
@@ -2058,6 +2090,12 @@ function mountApplication(root: HTMLElement): void {
           <div class="orbital-radar-bezel" id="orbital-radar-bezel">
             <span class="orbital-radar-label" aria-hidden="true">RADAR</span>
             <canvas class="orbital-canvas" aria-label="Radar scope"></canvas>
+          </div>
+          <div class="orbital-intro-cta" id="orbital-intro-cta" role="region" aria-label="How to continue">
+            <p class="orbital-intro-cta__eyebrow">Step 1 of 2</p>
+            <p class="orbital-intro-cta__title">Tap Earth — or press Space / Enter</p>
+            <p class="orbital-intro-cta__body">This opens the full console: <strong>six moving tracks</strong> (Track 1–6), controls on the side, and <strong>Protect Earth</strong> buttons when a collision is imminent.</p>
+            <p class="orbital-intro-cta__tour-hint">New here? Tap <strong>Tour</strong> (top-left) <em>before</em> or <em>after</em> you enter — it explains each panel in plain language.</p>
           </div>
         </div>
       </div>

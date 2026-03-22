@@ -806,11 +806,62 @@ body {
 }
 
 .hachal-gate__sub {
-  margin: 18px 0 22px;
+  margin: 18px 0 14px;
   font-size: 13px;
   line-height: 1.55;
   color: var(--orb-text-dim);
-  max-width: 36ch;
+  max-width: 42ch;
+}
+
+.hachal-gate__guide {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(100, 140, 190, 0.22);
+  background: rgba(8, 18, 36, 0.55);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.hachal-gate__guide-title {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--orb-cool);
+}
+
+.hachal-gate__guide-list {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--orb-text);
+}
+
+.hachal-gate__guide-list li {
+  margin-bottom: 6px;
+}
+
+.hachal-gate__demo {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--orb-text-dim);
+}
+
+.hachal-gate__demo-code {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--orb-heading);
+  background: rgba(4, 8, 16, 0.9);
+  border: 1px solid rgba(100, 155, 205, 0.35);
 }
 
 .hachal-gate__form {
@@ -962,6 +1013,7 @@ body:has(.orbital-app) {
 }
 
 .orbital-workspace--intro .orbital-radar-panel {
+  position: relative;
   flex: 1;
   display: flex;
   min-height: 0;
@@ -980,6 +1032,57 @@ body:has(.orbital-app) {
 
 .orbital-workspace--intro .orbital-radar-label {
   display: none;
+}
+
+.orbital-intro-cta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 18;
+  padding: 28px 18px 22px;
+  padding-bottom: max(22px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, transparent 0%, rgba(2, 6, 14, 0.2) 18%, rgba(2, 6, 14, 0.94) 55%);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.orbital-intro-cta--hidden {
+  display: none !important;
+}
+
+.orbital-intro-cta__eyebrow {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(158, 200, 232, 0.9);
+}
+
+.orbital-intro-cta__title {
+  margin: 0 0 8px;
+  font-size: clamp(17px, 4.2vw, 22px);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--orb-heading);
+  text-shadow: 0 1px 18px rgba(0, 0, 0, 0.55);
+}
+
+.orbital-intro-cta__body,
+.orbital-intro-cta__tour-hint {
+  margin: 0;
+  max-width: 52ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(200, 214, 228, 0.95);
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.45);
+}
+
+.orbital-intro-cta__tour-hint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(176, 190, 205, 0.92);
 }
 
 /* Space view: touch-first stack (radar first); wide desktop restores side-by-side */
@@ -1823,6 +1926,31 @@ body:has(.orbital-app) {
 
 .orbital-table__designator-text {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.orbital-table__designator-main {
+  font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #dce6f0;
+}
+
+.orbital-table__designator-sub {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(168, 184, 204, 0.88);
+  line-height: 1.25;
+}
+
+.orbital-fleet__track-label {
+  font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  font-size: 11px;
+  color: var(--orb-heading);
 }
 
 .orbital-table-light {

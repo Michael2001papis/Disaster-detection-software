@@ -10,7 +10,7 @@ Static **SPA** (Vite + TypeScript): a **mission-control style** training shell f
 
 1. **HACHAL gate** — access code entry; session remembered in `sessionStorage` until the tab closes, **Sign out**, or site data cleared. Demo code: constant `HACHAL_ACCESS_CODE` in `src/orbitalMonitor.ts`.
 2. **Earth intro** — canvas; tap/click or **Enter / Space** to enter the field.
-3. **Mission field** — six tracks (MET/AST by size class), radar canvas, telemetry sidebar:
+3. **Mission field** — six numbered tracks (**Track 1–6**); table shows **smaller vs larger object** by radar size (training labels, not weather meteors), radar canvas, telemetry sidebar:
    - **Simulation control** — sim rate ×, velocity cap  
    - **Simulation modifiers** — precision, fallout overlay on Earth, chaos surge, multi-band fallout  
    - **Status strip** — time / sim× / cap  
