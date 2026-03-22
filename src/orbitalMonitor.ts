@@ -773,7 +773,7 @@ function clearMagneticWaveShield(): void {
   magneticWaveCelebrationUntilAnimT = 0
 }
 
-function updateMagneticWaveShieldState(animT: number): void {
+function updateMagneticWaveShieldState(_animT: number): void {
   if (magneticWaveShieldTrackNum === null) return
   const a = asteroids.find((x) => x.num === magneticWaveShieldTrackNum)
   if (!a || trajectoryClearedImmediateThreat(a)) {

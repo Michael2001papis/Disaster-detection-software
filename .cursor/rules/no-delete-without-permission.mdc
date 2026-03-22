@@ -22,8 +22,7 @@ alwaysApply: true
 ### `.txt` Files (Reports & Logs)
 
 - Files such as:
-  - `STATUS_REPORT.txt`
-  - Notes, logs, reports
+  - Notes, logs, reports (e.g. `*.txt` in the repo root)
 
 - Are considered **critical project assets**, NOT temporary artifacts.
 
@@ -49,7 +48,7 @@ alwaysApply: true
   - Maintain alignment between codebase and documentation
 
 - 📌 Note:
-  - Detailed logs and internal tracking remain in `STATUS_REPORT.txt`
+  - Prefer `README.md` and in-app copy for product/status detail unless the user adds a dedicated report file
 
 ---
 

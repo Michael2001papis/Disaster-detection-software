@@ -4,13 +4,11 @@ Static **SPA** (Vite + TypeScript): a **mission-control style** training shell f
 
 **Product framing:** the UI presents the idea that *this system connects humanity to the advancement of space* — shared vigilance near Earth (detection, rehearsal, narrative) alongside exploration. See the in-app **Humanity safeguard — program vision** panel for the full statement.
 
-**Detailed status (features, limits, Hebrew notes):** [`STATUS_REPORT.txt`](./STATUS_REPORT.txt).
-
 ---
 
 ## Flow
 
-1. **HACHAL gate** — access code entry; session remembered in `sessionStorage` until the tab closes, **Sign out**, or site data cleared. Demo code value is documented in `STATUS_REPORT.txt` (constant `HACHAL_ACCESS_CODE` in `src/orbitalMonitor.ts`).
+1. **HACHAL gate** — access code entry; session remembered in `sessionStorage` until the tab closes, **Sign out**, or site data cleared. Demo code: constant `HACHAL_ACCESS_CODE` in `src/orbitalMonitor.ts`.
 2. **Earth intro** — canvas; tap/click or **Enter / Space** to enter the field.
 3. **Mission field** — six tracks (MET/AST by size class), radar canvas, telemetry sidebar:
    - **Simulation control** — sim rate ×, velocity cap  
@@ -63,9 +61,6 @@ Copy contents of **`dist/`** only. Prefer hosting `dist` on HTTPS for consistent
 | `src/orbitalMonitor.ts` | Gate, intro, canvas sim, UI, modals, waves, table |
 | `src/style.css` | Global + orbital / HACHAL / responsive table |
 | `vite.config.ts` | `base` from `VERCEL` |
-| `STATUS_REPORT.txt` | Long-form software status (Hebrew + technical detail) |
-
-**Legacy (not mounted by default):** `src/app.ts`, `src/types.ts`, `src/data/sampleObjects.ts`.
 
 ---
 
