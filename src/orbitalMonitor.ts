@@ -1619,6 +1619,12 @@ function finishGoSpaceHandoff(): void {
   spawnAsteroids(logicalW, logicalH)
   if (phaseLine) phaseLine.textContent = 'Nominal · six-track field · Earth-centered'
   document.querySelector('.orbital-balloon')?.classList.remove('orbital-balloon--hidden')
+  const tourBtn = document.getElementById('orbital-tour-btn')
+  const headerActions = document.querySelector('.orbital-balloon__header-actions')
+  if (tourBtn && headerActions && tourBtn.parentElement !== headerActions) {
+    headerActions.insertBefore(tourBtn, headerActions.firstChild)
+  }
+  tourBtn?.classList.remove('orbital-tour-btn--floating')
   magneticWavePulseUntil = 0
   magneticWaveBurstStartAnimT = 0
   clearMagneticWaveShield()
@@ -1712,7 +1718,7 @@ const ORBITAL_TUTORIAL_STEPS: readonly OrbitalTutorialStep[] = [
   },
   {
     title: 'Program vision',
-    body: 'Background reading: why this demo exists and how real planetary defense would be organized. It is story and context — not live data from space.',
+    body: 'A short summary stays visible; open Full background for the long read. Same story and context as before — not live data from space.',
     targetSelector: '.orbital-mandate',
   },
   {
@@ -2175,7 +2181,13 @@ function mountApplication(root: HTMLElement): void {
   root.innerHTML = `
     <div class="orbital-root">
       <div class="orbital-workspace orbital-workspace--intro" id="orbital-workspace">
-        <button type="button" class="orbital-intro-tour-btn" id="orbital-intro-tour-btn" aria-label="Operator briefing (guided tour)">
+        <button
+          type="button"
+          class="orbital-btn orbital-btn--tour orbital-tour-btn--floating"
+          id="orbital-tour-btn"
+          aria-label="Operator briefing (guided walkthrough)"
+          title="Operator briefing — walkthrough of each panel"
+        >
           Briefing
         </button>
         <aside class="orbital-balloon orbital-balloon--hidden" aria-label="Mission sidebar: training controls and live lists">
@@ -2190,7 +2202,6 @@ function mountApplication(root: HTMLElement): void {
                 </span>
               </div>
               <div class="orbital-balloon__header-actions">
-                <button type="button" class="orbital-btn orbital-btn--tour" id="orbital-tour-btn" title="Operator briefing — walkthrough of each panel">Briefing</button>
                 <button type="button" class="orbital-btn orbital-btn--radar" id="orbital-restart" title="Start a new exercise with fresh paths for all six tracks">Restart</button>
                 <button type="button" class="orbital-btn orbital-btn--signout" id="orbital-signout" title="End this session and return to the access gate">Log out</button>
               </div>
@@ -2207,22 +2218,32 @@ function mountApplication(root: HTMLElement): void {
                   'Background on what this training story represents. It is not a feed from real satellites or official alerts.',
                 )}
               </div>
-              <p class="orbital-zone__lead orbital-zone__lead--mandate">Optional reading about the idea behind this exercise—not live space data.</p>
-              <p class="orbital-mandate__tagline">This system connects humanity to the advancement of space.</p>
-              <p class="orbital-mandate__body">
-                Shared progress in orbit depends on <strong>open eyes</strong> as much as new rockets: knowing what
-                crosses Earth’s neighborhood, and rehearsing what to do about it, is how civilisation earns a long
-                future among the planets. A future operational stack would fuse <strong>global NEO surveys</strong>,
-                <strong>precision orbit determination</strong>, and <strong>deflection physics</strong> (kinetic
-                impact, gravity tractor, ion beams, or coordinated pulses) into one timeline: detect early →
-                characterize threat → choose response → verify miss distance.
-                Near-Earth objects span many sizes; the goal is <strong>days to decades</strong> of warning and a
-                rehearsed chain of command.
+              <p class="orbital-zone__lead orbital-zone__lead--mandate">
+                Narrative context for this exercise only — not live space data. Expand for the full background.
               </p>
-              <p class="orbital-mandate__foot">
-                This console is a <strong>training and narrative shell</strong> for that idea — not a real planetary
-                defense network.
-              </p>
+              <details class="orbital-mandate__details">
+                <summary class="orbital-mandate__summary">
+                  <span>Full background</span>
+                  <span class="orbital-mandate__summary-hint orbital-sr-only">, expands optional long read</span>
+                </summary>
+                <div class="orbital-mandate__expanded">
+                  <p class="orbital-mandate__tagline">This system connects humanity to the advancement of space.</p>
+                  <p class="orbital-mandate__body">
+                    Shared progress in orbit depends on <strong>open eyes</strong> as much as new rockets: knowing what
+                    crosses Earth’s neighborhood, and rehearsing what to do about it, is how civilisation earns a long
+                    future among the planets. A future operational stack would fuse <strong>global NEO surveys</strong>,
+                    <strong>precision orbit determination</strong>, and <strong>deflection physics</strong> (kinetic
+                    impact, gravity tractor, ion beams, or coordinated pulses) into one timeline: detect early →
+                    characterize threat → choose response → verify miss distance.
+                    Near-Earth objects span many sizes; the goal is <strong>days to decades</strong> of warning and a
+                    rehearsed chain of command.
+                  </p>
+                  <p class="orbital-mandate__foot">
+                    This console is a <strong>training and narrative shell</strong> for that idea — not a real planetary
+                    defense network.
+                  </p>
+                </div>
+              </details>
             </section>
             <div class="orbital-console-panel orbital-console-panel--sim orbital-subsystem orbital-subsystem--sim">
               <div class="orbital-zone__head">
@@ -2440,7 +2461,6 @@ function mountApplication(root: HTMLElement): void {
     mountOrbitalTutorial(root)
   }
   root.querySelector('#orbital-tour-btn')?.addEventListener('click', openTour)
-  root.querySelector('#orbital-intro-tour-btn')?.addEventListener('click', openTour)
 
   root.querySelector('#orbital-signout')?.addEventListener('click', () => {
     sessionStorage.removeItem(HACHAL_SESSION_KEY)
